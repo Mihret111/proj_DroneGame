@@ -331,7 +331,20 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
         // 1) Get terminal size every loop (handle resize)
         getmaxyx(stdscr, max_y, max_x);
 
-        // Compute inspection-right width and world-left width
+        // top info section: 2 lines
+        int content_top    = 1;                 // first row inside top border
+        int top_lines      = 2;                 // as you chose: A = 2 lines
+        int top_info_y1    = content_top;       // row for controls
+        int top_info_y2    = content_top + 1;   // row for paused status
+        int sep_y          = content_top + top_lines; // horizontal separator row
+        int content_bottom = max_y - 2;         // last row inside bottom border
+
+        if (sep_y >= content_bottom) {
+            // In extremely small terminals, avoid negative world height
+            sep_y = content_top;
+        }
+
+        // right inspection width
         int insp_width = 35;
         if (max_x < insp_width + 10) {
             insp_width = max_x / 3;
@@ -341,13 +354,18 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
         int insp_start_x = max_x - insp_width;
         if (insp_start_x < 1) insp_start_x = 1;
 
-        int main_width  = insp_start_x - 2; // left world inside borders
+        // world area starts below separator
+        int world_top    = sep_y + 1;
+        if (world_top > content_bottom) world_top = content_top + 1;
+        int world_bottom = content_bottom;
+        int world_height = world_bottom - world_top + 1;
+        if (world_height < 1) world_height = 1;
+
+        // world width (left side)
+        int main_width = insp_start_x - 2; // left of inspection region
         if (main_width < 10) main_width = 10;
 
-        int main_height = max_y - 2;        // vertical world inside borders
-        if (main_height < 5) main_height = 5;
-
-        // 2) Prepare fd_set and use select()
+        // 2) Prepare fd_set and use select(): select() setup
         fd_set rfds;
         int maxfd = imax(fd_kb, fd_from_d) + 1;
 
@@ -503,37 +521,48 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
         erase();
         box(stdscr, 0, 0);
 
-        // Separator between world and right-side inspection region
+        // Top info lines
+        mvprintw(top_info_y1, 2,
+                 "Controls: w e r / s d f / x c v | d=brake, p=pause, R=reset, q=quit");
+        mvprintw(top_info_y2, 2,
+                 "Paused: %s", paused ? "YES" : "NO");
+
+        // Horizontal separator below top info
+        if (sep_y >= 1 && sep_y <= max_y - 2) {
+            for (int x = 1; x < max_x - 1; ++x) {
+                mvaddch(sep_y, x, '-');
+            }
+        }
+
+        // Vertical separator between world and inspection
         int sep_x = insp_start_x - 1;
         if (sep_x > 1 && sep_x < max_x - 1) {
-            for (int y = 1; y < max_y - 1; ++y) {
+            for (int y = world_top; y <= world_bottom; ++y) {
                 mvaddch(y, sep_x, '|');
             }
         }
 
-        // Map world coordinates to screen coordinates
+        // WORLD DRAWING (left)
         double world_half = params.world_half;
         double scale_x = main_width  / (2.0 * world_half);
-        double scale_y = main_height / (2.0 * world_half);
+        double scale_y = world_height / (2.0 * world_half);
+        if (scale_x <= 0) scale_x = 1.0;
+        if (scale_y <= 0) scale_y = 1.0;
 
         int sx = (int)(cur_state.x * scale_x) + main_width / 2 + 1;
-        int sy = (int)(-cur_state.y * scale_y) + main_height / 2 + 1;
+        int sy = (int)(-cur_state.y * scale_y) + world_top + world_height / 2;
 
         if (sx < 1) sx = 1;
         if (sx > main_width) sx = main_width;
-        if (sy < 1) sy = 1;
-        if (sy > main_height) sy = main_height;
+        if (sy < world_top) sy = world_top;
+        if (sy > world_bottom) sy = world_bottom;
 
         mvaddch(sy, sx, '+');
 
-        // Top info line
-        mvprintw(1, 2,
-                 "Controls: w e r / s d f / x c v | d=brake, p=pause, R=reset, q=quit");
-        mvprintw(2, 2, "Paused: %s", paused ? "YES" : "NO");
+        // Right inspection info
+        int info_y = world_top;            // align with top of world
+        int info_x = insp_start_x + 1;     // right region text start
 
-        // Right inspection text region
-        int info_y = 3;
-        int info_x = insp_start_x + 1;
         if (info_x < max_x - 1) {
             mvprintw(info_y,     info_x, "INSPECTION");
             mvprintw(info_y + 2, info_x, "Last key: %c", last_key);
