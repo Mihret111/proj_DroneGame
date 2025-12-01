@@ -1,0 +1,17 @@
+// server.h
+// Interface for the server/blackboard process (B).
+// ======================================================================
+
+#ifndef SERVER_H
+#define SERVER_H
+
+#include "params.h"
+
+// Run the server process:
+//   - fd_kb     : read-end of pipe I->B
+//   - fd_to_d   : write-end of pipe B->D
+//   - fd_from_d : read-end of pipe D->B
+//   - params    : simulation parameters
+void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params);
+
+#endif // SERVER_H
