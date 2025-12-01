@@ -6,6 +6,7 @@
 #include <sys/wait.h>   // wait()
 #include <ncurses.h>    // ncurses UI
 #include <string.h>     // strlen, strtok, strcmp
+#include <errno.h>      // errno, EINTR, EAGAIN, EWOULDBLOCK
 #include <time.h>       // nanosleep()
 #include <fcntl.h>      // fcntl(), O_NONBLOCK
 #include <stdbool.h>    // bool, true, false
@@ -244,12 +245,18 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d) {
             // select() waits indefinitely (NULL timeout) until any FD has data.
             sel = select(maxfd, &rfds, NULL, NULL, NULL);
 
-            if (sel == -1) {
-
+             if (sel == -1) {
+                // If a signal interrupted select (like SIGWINCH on resize),
+                // errno will be EINTR. That is not a real error → just retry.
+                if (errno == EINTR) {
+                    // loop again and call select() once more
+                    continue;
+                } else {
+                    // Any other error is fatal.
                     endwin();
                     die("[B] select failed");
                 }
-            
+            }
             // sel >= 0 → we have some event to handle.
             break;
         }
