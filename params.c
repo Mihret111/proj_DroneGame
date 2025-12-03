@@ -42,12 +42,12 @@ void init_default_params(SimParams *p) {
     p->mass       = 1.0;
     p->visc       = 1.0;
     p->dt         = 0.05;
-    p->force_step = 5.0;
+    p->force_step = 1.0;
     p->world_half = 50.0;
 
     // unused now, but ready for walls
     p->wall_clearance = 5.0;
-    p->wall_gain      = 0.1;
+    p->wall_gain      = 10;
 }
 
 // Load parameters from a simple "key=value" file.

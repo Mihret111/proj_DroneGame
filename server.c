@@ -21,6 +21,125 @@
 #include <sys/select.h>   // for fd_set, FD_ZERO, FD_SET, select()
 #include <math.h>  // for sqrt, to be used in key mapping instead of hard code, REP
 
+#define NUM_OBSTACLES 8
+
+typedef struct {
+    double x;   // world x coordinate
+    double y;   // world y coordinate
+} Obstacle;
+
+// Global / static array of 8 obstacles
+static Obstacle g_obstacles[NUM_OBSTACLES];
+
+#include <math.h>  // at top of server.c, if not already there
+
+// ----------------------------------------------------------------------
+// Compute repulsive vector from 8 point obstacles in B.
+// Similar idea to walls, but radial from each obstacle:
+//   - obstacle at (ox,oy)
+//   - drone at   (x,y)
+//   - distance rho = ||p - o||
+//   - if rho < obs_clearance:
+//         mag = obs_gain * (1/rho - 1/obs_clearance)
+//         direction = (p - o)/rho
+//         P += mag * direction
+//
+// Here we just choose some reasonable obs_clearance and obs_gain.
+// Later you can move these into params.txt if you want.
+// ----------------------------------------------------------------------
+static void compute_obstacles_repulsive_P(const DroneStateMsg *s,
+                                          const SimParams     *params,
+                                          const Obstacle      *obs,
+                                          int                  num_obs,
+                                          double              *Px,
+                                          double              *Py)
+{
+    *Px = 0.0;
+    *Py = 0.0;
+
+    // You can later add obs_clearance, obs_gain into SimParams.
+    // For now, choose reasonable constants:
+    const double obs_clearance = params->world_half * 0.35;  // influence radius
+    const double obs_gain      = 120.0;                      // good behaivior was seen with 120 strength 
+    const double eps           = 1e-3;
+
+    // used for test, if obs had no repulsive power
+    if (obs_clearance <= 0.0 || obs_gain <= 0.0) {
+
+        return;
+    }
+
+    for (int k = 0; k < num_obs; ++k) {
+        double ox = obs[k].x;
+        double oy = obs[k].y;
+
+        double dx  = s->x - ox;
+        double dy  = s->y - oy;
+        double rho = sqrt(dx*dx + dy*dy);   // here calc how close the drone has become
+
+        // ?? confirm this too
+        if (rho < eps) {
+            // On top of the obstacle: push strongly in some direction
+            rho = eps;
+        }
+
+        if (rho < obs_clearance) {
+            double mag = obs_gain * (1.0/rho - 1.0/obs_clearance);  // khatib
+            if (mag < 0.0) mag = 0.0;
+
+            double ux = dx / rho;  // unit vector away from obstacle
+            double uy = dy / rho;
+
+            // actual ux uy has to be aligned to the 8 lines and changed to a virtual key whose
+            // magniture will later be multiplied with the Fx, Fy retrieved from the key mapping
+            // ux, uy dotted withe the eight lines:
+            
+            // TODO: see which direction better alligns with the shorter Rho to obstacle
+            // retrieve Fx and Fy as per that, then 
+            *Px += mag * ux;
+            *Py += mag * uy;
+        }
+    }
+}
+
+// another helper
+
+// ----------------------------------------------------------------------
+// Send total force to D:
+//   F_total = user_force (cur_force) + obstacles repulsion (P_obs).
+// Walls repulsion is still computed in D.
+// ----------------------------------------------------------------------
+static void send_total_force_to_d(const ForceStateMsg *user_force,
+                                  const DroneStateMsg *cur_state,
+                                  const SimParams     *params,
+                                  const Obstacle      *obs,
+                                  int                  num_obs,
+                                  int                  fd_to_d,
+                                  FILE                *logfile,
+                                  const char          *reason)
+{
+    double Pox = 0.0, Poy = 0.0;
+    compute_obstacles_repulsive_P(cur_state, params, obs, num_obs, &Pox, &Poy);
+
+    ForceStateMsg out = *user_force;  // copy user part
+    out.Fx += Pox;
+    out.Fy += Poy;
+
+    if (write(fd_to_d, &out, sizeof(out)) == -1) {
+        perror("[B] write to D failed (total force)");
+    } else if (logfile) {
+        fprintf(logfile,
+                "SEND_FORCE (%s): userFx=%.2f userFy=%.2f, "
+                "Pobs=(%.2f,%.2f) => Fx=%.2f Fy=%.2f\n",
+                reason ? reason : "?",
+                user_force->Fx, user_force->Fy,
+                Pox, Poy,
+                out.Fx, out.Fy);
+        fflush(logfile);
+    }
+}
+
+
 //function to map wall repulsion to a virtual key
 
 // ----------------------------------------------------------------------
@@ -144,6 +263,21 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
         die("[B] cannot open log.txt");
     }
 
+    // -------------------------------------------
+    // Initialize 8 obstacles in world coordinates
+    // (you can tweak positions later)
+    // -------------------------------------------
+    double R = params.world_half * 0.5;  // radius for placing obstacles
+    g_obstacles[0] = (Obstacle){ +0.0, +R };
+    g_obstacles[1] = (Obstacle){ +R, +0.0 };
+    g_obstacles[2] = (Obstacle){ +0.0, -R };
+    g_obstacles[3] = (Obstacle){ -R, +0.0 };
+    g_obstacles[4] = (Obstacle){ -R, -0.0 };
+    g_obstacles[5] = (Obstacle){ +R * 0.7, +R * 0.7 };
+    g_obstacles[6] = (Obstacle){ -R * 0.7, +R * 0.7 };
+    g_obstacles[7] = (Obstacle){ -R * 0.7, -R * 0.7 };
+
+
     // --- Blackboard state (shared model of the world) ---
     ForceStateMsg cur_force;
     cur_force.Fx = 0.0;
@@ -155,11 +289,23 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
     bool paused = false;
 
     // Send initial zero-force to D so it starts defined.
-    if (write(fd_to_d, &cur_force, sizeof(cur_force)) == -1) {
+/*     if (write(fd_to_d, &cur_force, sizeof(cur_force)) == -1) {
         fclose(logfile);
         endwin();
         die("[B] initial write to D failed");
-    }
+    } */
+    // Replaced: send to helper rather than directly write to D
+        // Initial state is zero, so cur_state is still {0,0,0,0}.
+    // Send initial total force (which is just user=0 + obstacles repulsion).
+    send_total_force_to_d(&cur_force,
+                          &cur_state,
+                          &params,
+                          g_obstacles,
+                          NUM_OBSTACLES,
+                          fd_to_d,
+                          logfile,
+                          "init");
+
 
     int max_y, max_x;
 
@@ -206,6 +352,22 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
         int main_width = insp_start_x - 2;
         if (main_width < 10) main_width = 10;
 
+        initscr();
+        start_color();
+
+        // Enable color if terminal supports it
+        if (has_colors() == FALSE) {
+            endwin();
+            printf("Your terminal does not support colors.\n");
+        return 1;
+        }
+
+        // Define a custom orange color
+        // RGB scaled 0–1000 in ncurses
+        init_color(COLOR_YELLOW, 1000, 500, 0);   // Strong orange (R=1000, G=500, B=0)
+
+        // Assign color-pair ID 1: ORANGE foreground, BLACK background
+        init_pair(1, COLOR_YELLOW, COLOR_BLACK);
         // ------------------------------------------------------------------
         // 2) Use select() to wait for data from keyboard and dynamics.
         //    Also handle EINTR (e.g., from SIGWINCH on resize).
@@ -264,11 +426,14 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
                     cur_force.Fx = 0.0;
                     cur_force.Fy = 0.0;
                     cur_force.reset = 0;
-                    if (write(fd_to_d, &cur_force, sizeof(cur_force)) == -1) {
-                        fclose(logfile);
-                        endwin();
-                        die("[B] write to D failed (pause)");
-                    }
+                    send_total_force_to_d(&cur_force,
+                                        &cur_state,
+                                        &params,
+                                        g_obstacles,
+                                        NUM_OBSTACLES,
+                                        fd_to_d,
+                                        logfile,
+                                        "key");
                     fprintf(logfile, "PAUSE: ON\n");
                 } else {
                     fprintf(logfile, "PAUSE: OFF\n");
@@ -288,11 +453,20 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
                 cur_force.Fy = 0.0;
                 cur_force.reset = 1; // signal D to reset its state
 
-                if (write(fd_to_d, &cur_force, sizeof(cur_force)) == -1) {
+    /*             if (write(fd_to_d, &cur_force, sizeof(cur_force)) == -1) {
                     fclose(logfile);
                     endwin();
                     die("[B] write to D failed (reset)");
-                }
+                } */
+                // Replaced
+                send_total_force_to_d(&cur_force,
+                      &cur_state,
+                      &params,
+                      g_obstacles,
+                      NUM_OBSTACLES,
+                      fd_to_d,
+                      logfile,
+                      "key");
 
                 cur_force.reset = 0; // clear locally
                 paused = false;      // also unpause
@@ -300,7 +474,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
                 fprintf(logfile, "RESET requested (R)\n");
                 fflush(logfile);
             }
-            // (d) Direction / brake keys
+            // (d) Directional keys and the break 'd'
             else {
                 double dFx, dFy;
                 direction_from_key(km.key, &dFx, &dFy);
@@ -318,11 +492,19 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
 
                     cur_force.reset = 0;
 
-                    if (write(fd_to_d, &cur_force, sizeof(cur_force)) == -1) {
+/*                     if (write(fd_to_d, &cur_force, sizeof(cur_force)) == -1) {
                         fclose(logfile);
                         endwin();
                         die("[B] write to D failed (force)");
-                    }
+                    } */
+                    send_total_force_to_d(&cur_force,
+                        &cur_state,
+                        &params,
+                        g_obstacles,
+                        NUM_OBSTACLES,
+                        fd_to_d,
+                        logfile,
+                        "key");
 
                     fprintf(logfile,
                             "KEY: %c  dFx=%.1f dFy=%.1f -> Fx=%.2f Fy=%.2f\n",
@@ -355,7 +537,17 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
                     "STATE: x=%.2f y=%.2f vx=%.2f vy=%.2f\n",
                     s.x, s.y, s.vx, s.vy);
             fflush(logfile);
+            // send updated total force (evenif user doesn't send cmd) (user + obstacles)
+            send_total_force_to_d(&cur_force,
+                                  &cur_state,
+                                  &params,
+                                  g_obstacles,
+                                  NUM_OBSTACLES,
+                                  fd_to_d,
+                                  logfile,
+                                  "state");
         }
+        
 
         // ------------------------------------------------------------------
         // 4.5) Apply wall repulsion as a virtual key (assignment-style).
@@ -399,7 +591,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
 
         // WORLD DRAWING (left)
         double world_half = params.world_half;
-        double scale_x = main_width  / (2.0 * world_half);
+        double scale_x = main_width  / (2.0 * world_half);   // mapping world coordinates to the drone world on the display scree
         double scale_y = world_height / (2.0 * world_half);
         if (scale_x <= 0) scale_x = 1.0;
         if (scale_y <= 0) scale_y = 1.0;
@@ -413,6 +605,22 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
         if (sy > world_bottom) sy = world_bottom;
 
         mvaddch(sy, sx, '+'); // draw drone
+
+        // Draw 8 obstacles as 'O' in the world
+        for (int k = 0; k < NUM_OBSTACLES; ++k) {
+            int ox = (int)(g_obstacles[k].x * scale_x) + main_width / 2 + 1;
+            int oy = (int)(-g_obstacles[k].y * scale_y) + world_top + world_height / 2;
+
+            if (ox < 1) ox = 1;
+            if (ox > main_width) ox = main_width;
+            if (oy < world_top) oy = world_top;
+            if (oy > world_bottom) oy = world_bottom;
+
+            mvaddch(oy, ox, 'o');  // TODO: add color to make them orange
+            
+            attroff(COLOR_PAIR(1));
+        }
+
 
         // INSPECTION panel on the right
         int info_y = world_top;
