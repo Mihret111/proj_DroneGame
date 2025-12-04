@@ -41,7 +41,7 @@ void run_obstacle_process(int write_fd, SimParams params) {
     // How often we *try* to spawn a new batch of obstacles (in real seconds).
     // B will ignore it if obstacles are still active.
     // decides how soon O tries to create the next batch
-    const unsigned spawn_interval_sec = 40;   // 40 did good visually, test more
+    const unsigned spawn_interval_sec = 45;   // 40 did good visually, test more
     // -----------------------------------------------------------------
 
     

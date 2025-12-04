@@ -678,35 +678,67 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             int n = read(fd_tgt, &msg, sizeof(msg));
             if (n <= 0) {
                 mvprintw(1, 1, "[B] Target generator ended.");
-            } else {
-                if (paused){
-                    // Read but ignore new targets while paused
+                } else {
+        if (paused) {
+            fprintf(logfile,
+                    "[B] Received target set but PAUSED -> ignored.\n");
+            fflush(logfile);
+        } else {
+            int requested = msg.count;
+            if (requested > NUM_TARGETS) requested = NUM_TARGETS;
+
+            // Tuning for filtering:
+            double wall_margin     = params.world_half * 0.20; // keep away from walls
+            double obs_clearance   = params.world_half * 0.30; // away from obstacles
+
+            int accepted = 0;
+
+            for (int i = 0; i < requested; ++i) {
+                double x = msg.tgt[i].x;
+                double y = msg.tgt[i].y;
+
+                // 1) reject if too close to walls
+                if (target_too_close_to_wall(x, y, &params, wall_margin)) {
                     fprintf(logfile,
-                            "[B] Received target set but PAUSED -> ignored.\n");
-                    fflush(logfile);
-                }
-                else{
-                int count = msg.count;
-                if (count > NUM_TARGETS) count = NUM_TARGETS;
-
-                for (int i = 0; i < count; ++i) {
-                    g_targets[i].x          = msg.tgt[i].x;
-                    g_targets[i].y          = msg.tgt[i].y;
-                    g_targets[i].life_steps = msg.tgt[i].life_steps;
-                    g_targets[i].active     = 1;
-                }
-                for (int i = count; i < NUM_TARGETS; ++i) {
-                    g_targets[i].active     = 0;
-                    g_targets[i].life_steps = 0;
+                            "[B] Target (%.2f,%.2f) rejected: too close to walls.\n",
+                            x, y);
+                    continue;
                 }
 
-                fprintf(logfile,
-                        "[B] Received %d targets from T.\n",
-                        count);
-                fflush(logfile);
+                // 2) reject if too close to obstacles
+                if (target_too_close_to_obstacles(x, y,
+                                                  g_obstacles, NUM_OBSTACLES,
+                                                  obs_clearance)) {
+                    fprintf(logfile,
+                            "[B] Target (%.2f,%.2f) rejected: too close to obstacles.\n",
+                            x, y);
+                    continue;
+                }
+
+                // If we get here, target is acceptable.
+                if (accepted < NUM_TARGETS) {
+                    g_targets[accepted].x          = x;
+                    g_targets[accepted].y          = y;
+                    g_targets[accepted].life_steps = msg.tgt[i].life_steps;
+                    g_targets[accepted].active     = 1;
+                    accepted++;
                 }
             }
+
+            // Deactivate remaining slots
+            for (int i = accepted; i < NUM_TARGETS; ++i) {
+                g_targets[i].active     = 0;
+                g_targets[i].life_steps = 0;
+            }
+
+            fprintf(logfile,
+                    "[B] Accepted %d targets (requested %d).\n",
+                    accepted, requested);
+            fflush(logfile);
         }
+    }
+
+}
 
 
         // ------------------------------------------------------------------

@@ -108,6 +108,16 @@ void compute_obstacles_repulsive_P(const DroneStateMsg *s,
                                    int                  num_obs,
                                    double              *Px,
                                    double              *Py);
-
+// Check if a point (x,y) is too close to the walls.
+static int target_too_close_to_wall(double x,
+                                    double y,
+                                    const SimParams *params,
+                                    double wall_margin);
+// Check if (x,y) is too close to any active obstacle.
+static int target_too_close_to_obstacles(double x,
+                                         double y,
+                                         const Obstacle *obs,
+                                         int num_obs,
+                                         double min_dist);
 
 #endif // UTIL_H

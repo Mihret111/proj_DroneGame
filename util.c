@@ -223,6 +223,8 @@ void compute_repulsive_P(const DroneStateMsg *s,
     }
 }
 
+
+
 /* // Walls-only wrapper (what D currently uses)
 void compute_wall_repulsive_P(const DroneStateMsg *s,
                               const SimParams    *params,
@@ -325,4 +327,49 @@ void compute_wall_repulsive_P(const DroneStateMsg *s,
         // Repulsive direction: push UP → (0, +1)
         *Py += mag;
     }
+}
+
+
+// Check if a point (x,y) is too close to the walls.
+static int target_too_close_to_wall(double x,
+                                    double y,
+                                    const SimParams *params,
+                                    double wall_margin)
+{
+    int insp_width = 15;               // was 35
+    double wh = params->world_half;
+    double mod_wh = wh - wall_margin+insp_width;   
+    // Distance to right wall = wh - x (if x > 0)
+    // Distance to left  wall = wh + x   (if x < 0)
+    // But easiest: distance in x is wh - |x|
+    double dx_to_wall = mod_wh - fabs(x);
+    double dy_to_wall = wh - fabs(y);
+
+    if (dx_to_wall < wall_margin) return 1;
+    if (dy_to_wall < wall_margin) return 1;
+
+    return 0;
+}
+
+// Check if (x,y) is too close to any active obstacle.
+static int target_too_close_to_obstacles(double x,
+                                         double y,
+                                         const Obstacle *obs,
+                                         int num_obs,
+                                         double min_dist)
+{
+    double min_dist2 = min_dist * min_dist;
+
+    for (int i = 0; i < num_obs; ++i) {
+        if (!obs[i].active) continue;
+
+        double dx = x - obs[i].x;
+        double dy = y - obs[i].y;
+        double d2 = dx*dx + dy*dy;
+
+        if (d2 < min_dist2) {
+            return 1;
+        }
+    }
+    return 0;
 }
