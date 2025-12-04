@@ -592,21 +592,23 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             // **** ADD decrement obstacle & target lifetimes logic here ****
             // considers each time input is received from d, 1 sim time had elapsed.
             // Decrement obstacle lifetimes
-            for (int i = 0; i < NUM_OBSTACLES; ++i) {
-                if (g_obstacles[i].active && g_obstacles[i].life_steps > 0) {
-                    g_obstacles[i].life_steps--;   // decrease 1 step from its lifetime
-                    if (g_obstacles[i].life_steps == 0) {
-                        g_obstacles[i].active = 0;
+            if (!paused){    // Only age obstacles & targets when simulation is running
+                for (int i = 0; i < NUM_OBSTACLES; ++i) {
+                    if (g_obstacles[i].active && g_obstacles[i].life_steps > 0) {
+                        g_obstacles[i].life_steps--;   // decrease 1 step from its lifetime
+                        if (g_obstacles[i].life_steps == 0) {
+                            g_obstacles[i].active = 0;
+                        }
                     }
                 }
-            }
 
-            // Decrement target lifetimes
-            for (int i = 0; i < NUM_TARGETS; ++i) {
-                if (g_targets[i].active && g_targets[i].life_steps > 0) {
-                    g_targets[i].life_steps--;
-                    if (g_targets[i].life_steps == 0) {
-                        g_targets[i].active = 0;
+                // Decrement target lifetimes
+                for (int i = 0; i < NUM_TARGETS; ++i) {
+                    if (g_targets[i].active && g_targets[i].life_steps > 0) {
+                        g_targets[i].life_steps--;
+                        if (g_targets[i].life_steps == 0) {
+                            g_targets[i].active = 0;
+                        }
                     }
                 }
             }
@@ -635,26 +637,34 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                 mvprintw(0, 1, "[B] Obstacle generator ended.");
                 // optionally: fd_obs = -1 and stop using it
             } else {
-                int count = msg.count;
-                if (count > NUM_OBSTACLES) count = NUM_OBSTACLES;
-
-                // Overwrite our current obstacles with the new set
-                for (int i = 0; i < count; ++i) {
-                    g_obstacles[i].x          = msg.obs[i].x;
-                    g_obstacles[i].y          = msg.obs[i].y;
-                    g_obstacles[i].life_steps = msg.obs[i].life_steps;
-                    g_obstacles[i].active     = 1;
+                if (paused){
+                    // Read but ignore new obstacles while paused
+                    fprintf(logfile,
+                            "[B] Received obstacle set but PAUSED -> ignored.\n");
+                    fflush(logfile);
                 }
-                // Deactivate any remaining slots
-                for (int i = count; i < NUM_OBSTACLES; ++i) {
-                    g_obstacles[i].active     = 0;
-                    g_obstacles[i].life_steps = 0;
-                }
+                else{
+                    int count = msg.count;
+                    if (count > NUM_OBSTACLES) count = NUM_OBSTACLES;
 
-                fprintf(logfile,
-                        "[B] Received %d obstacles from O.\n",
-                        count);
-                fflush(logfile);
+                    // Overwrite our current obstacles with the new set
+                    for (int i = 0; i < count; ++i) {
+                        g_obstacles[i].x          = msg.obs[i].x;
+                        g_obstacles[i].y          = msg.obs[i].y;
+                        g_obstacles[i].life_steps = msg.obs[i].life_steps;
+                        g_obstacles[i].active     = 1;
+                    }
+                    // Deactivate any remaining slots
+                    for (int i = count; i < NUM_OBSTACLES; ++i) {
+                        g_obstacles[i].active     = 0;
+                        g_obstacles[i].life_steps = 0;
+                    }
+
+                    fprintf(logfile,
+                            "[B] Received %d obstacles from O.\n",
+                            count);
+                    fflush(logfile);
+                }
             }
         }
 
@@ -669,6 +679,13 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             if (n <= 0) {
                 mvprintw(1, 1, "[B] Target generator ended.");
             } else {
+                if (paused){
+                    // Read but ignore new targets while paused
+                    fprintf(logfile,
+                            "[B] Received target set but PAUSED -> ignored.\n");
+                    fflush(logfile);
+                }
+                else{
                 int count = msg.count;
                 if (count > NUM_TARGETS) count = NUM_TARGETS;
 
@@ -687,6 +704,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                         "[B] Received %d targets from T.\n",
                         count);
                 fflush(logfile);
+                }
             }
         }
 
