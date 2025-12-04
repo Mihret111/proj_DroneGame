@@ -10,6 +10,8 @@
 #include "headers/server.h"
 #include "headers/messages.h"
 #include "headers/util.h"
+#include "headers/obstacles.h"
+#include "headers/targets.h"
 
 #include <ncurses.h>
 #include <stdio.h>
@@ -21,83 +23,12 @@
 #include <sys/select.h>   // for fd_set, FD_ZERO, FD_SET, select()
 #include <math.h>  // for sqrt, to be used in key mapping instead of hard code, REP
 
-#define NUM_OBSTACLES 8
-
-#include "headers/obstacles.h"
-
+//#define NUM_OBSTACLES 8
 // Global / static array of 8 obstacles
-static Obstacle g_obstacles[NUM_OBSTACLES];
+//static Obstacle g_obstacles[NUM_OBSTACLES];
 
 #include <math.h>  // at top of server.c, if not already there
 
-// ----------------------------------------------------------------------
-// Compute repulsive vector from 8 point obstacles in B.
-// Similar idea to walls, but radial from each obstacle:
-//   - obstacle at (ox,oy)
-//   - drone at   (x,y)
-//   - distance rho = ||p - o||
-//   - if rho < obs_clearance:
-//         mag = obs_gain * (1/rho - 1/obs_clearance)
-//         direction = (p - o)/rho
-//         P += mag * direction
-//
-// Here we just choose some reasonable obs_clearance and obs_gain.
-// Later you can move these into params.txt if you want.
-// ----------------------------------------------------------------------
-/* static void compute_obstacles_repulsive_P(const DroneStateMsg *s,
-                                          const SimParams     *params,
-                                          const Obstacle      *obs,
-                                          int                  num_obs,
-                                          double              *Px,
-                                          double              *Py)
-{
-    *Px = 0.0;
-    *Py = 0.0;
-
-    // You can later add obs_clearance, obs_gain into SimParams.
-    // For now, choose reasonable constants:
-    const double obs_clearance = params->world_half * 0.35;  // influence radius
-    const double obs_gain      = 120.0;                      // good behaivior was seen with 120 strength 
-    const double eps           = 1e-3;
-
-    // used for test, if obs had no repulsive power
-    if (obs_clearance <= 0.0 || obs_gain <= 0.0) {
-
-        return;
-    }
-
-    for (int k = 0; k < num_obs; ++k) {
-        double ox = obs[k].x;
-        double oy = obs[k].y;
-
-        double dx  = s->x - ox;
-        double dy  = s->y - oy;
-        double rho = sqrt(dx*dx + dy*dy);   // here calc how close the drone has become
-
-        // ?? confirm this too
-        if (rho < eps) {
-            // On top of the obstacle: push strongly in some direction
-            rho = eps;
-        }
-
-        if (rho < obs_clearance) {
-            double mag = obs_gain * (1.0/rho - 1.0/obs_clearance);  // khatib
-            if (mag < 0.0) mag = 0.0;
-
-            double ux = dx / rho;  // unit vector away from obstacle
-            double uy = dy / rho;
-
-            // actual ux uy has to be aligned to the 8 lines and changed to a virtual key whose
-            // magniture will later be multiplied with the Fx, Fy retrieved from the key mapping
-            // ux, uy dotted withe the eight lines:
-            
-            // TODO: see which direction better alligns with the shorter Rho to obstacle
-            // retrieve Fx and Fy as per that, then 
-            *Px += mag * ux;
-            *Py += mag * uy;
-        }
-    }
-} */
 
 // another helper
 
@@ -356,7 +287,8 @@ static void apply_wall_repulsion_virtual_key(ForceStateMsg       *cur_force,
 
 
 
-void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params) {
+void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int fd_tgt, SimParams params) 
+{
     // --- Initialize ncurses ---
     initscr();
     cbreak();
@@ -470,24 +402,35 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
         return 1;
         }
 
-        // Define a custom orange color
+        // Define a custom colors for target and obstacles
         // RGB scaled 0–1000 in ncurses
         init_color(COLOR_YELLOW, 1000, 500, 0);   // For obs: Strong orange (R=1000, G=500, B=0)
+        init_color(COLOR_GREEN, 0, 1000, 0);   // For targets: light green
         // Assign color-pair IDs 1 and 2: ORANGE foreground, BLACK background
         init_pair(1, COLOR_YELLOW, COLOR_BLACK);
+        init_pair(2, COLOR_GREEN, COLOR_BLACK);
        
         // ------------------------------------------------------------------
         // 2) Use select() to wait for data from keyboard and dynamics.
         //    Also handle EINTR (e.g., from SIGWINCH on resize).
         // ------------------------------------------------------------------
         fd_set rfds;
-        int maxfd = imax(fd_kb, fd_from_d) + 1;
+        // int maxfd = imax(fd_kb, fd_from_d) + 1;
+        int maxfd = fd_kb;
+        
+        if (fd_from_d > maxfd) maxfd = fd_from_d;
+        if (fd_obs    > maxfd) maxfd = fd_obs;
+        if (fd_tgt    > maxfd) maxfd = fd_tgt;
+        maxfd += 1;
 
         int sel;
         while (1) {
             FD_ZERO(&rfds);
             FD_SET(fd_kb,     &rfds);
             FD_SET(fd_from_d, &rfds);
+            //
+            FD_SET(fd_obs,    &rfds);
+            FD_SET(fd_tgt,    &rfds);
 
             sel = select(maxfd, &rfds, NULL, NULL, NULL);
 
@@ -645,7 +588,29 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
                     "STATE: x=%.2f y=%.2f vx=%.2f vy=%.2f\n",
                     s.x, s.y, s.vx, s.vy);
             fflush(logfile);
-            // send updated total force (evenif user doesn't send cmd) (user + obstacles)
+            
+            // **** ADD decrement obstacle & target lifetimes logic here ****
+            // considers each time input is received from d, 1 sim time had elapsed.
+            // Decrement obstacle lifetimes
+            for (int i = 0; i < NUM_OBSTACLES; ++i) {
+                if (g_obstacles[i].active && g_obstacles[i].life_steps > 0) {
+                    g_obstacles[i].life_steps--;   // decrease 1 step from its lifetime
+                    if (g_obstacles[i].life_steps == 0) {
+                        g_obstacles[i].active = 0;
+                    }
+                }
+            }
+
+            // Decrement target lifetimes
+            for (int i = 0; i < NUM_TARGETS; ++i) {
+                if (g_targets[i].active && g_targets[i].life_steps > 0) {
+                    g_targets[i].life_steps--;
+                    if (g_targets[i].life_steps == 0) {
+                        g_targets[i].active = 0;
+                    }
+                }
+            }
+            // Then, send updated total force (evenif user doesn't send cmd) (user + obstacles)
             send_total_force_to_d(&cur_force,
                                   &cur_state,
                                   &params,
@@ -656,7 +621,75 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
                                   "state");
                                   
         }
+
+        // ------------------------------------------------------------------
+        //Handle obstacle-set messages in B
+        // ------------------------------------------------------------------
         
+        // ----- New obstacle set from O -----
+        if (FD_ISSET(fd_obs, &rfds)) {
+            ObstacleSetMsg msg;
+            int n = read(fd_obs, &msg, sizeof(msg));
+            if (n <= 0) {
+                // O process ended; you may log and continue
+                mvprintw(0, 1, "[B] Obstacle generator ended.");
+                // optionally: fd_obs = -1 and stop using it
+            } else {
+                int count = msg.count;
+                if (count > NUM_OBSTACLES) count = NUM_OBSTACLES;
+
+                // Overwrite our current obstacles with the new set
+                for (int i = 0; i < count; ++i) {
+                    g_obstacles[i].x          = msg.obs[i].x;
+                    g_obstacles[i].y          = msg.obs[i].y;
+                    g_obstacles[i].life_steps = msg.obs[i].life_steps;
+                    g_obstacles[i].active     = 1;
+                }
+                // Deactivate any remaining slots
+                for (int i = count; i < NUM_OBSTACLES; ++i) {
+                    g_obstacles[i].active     = 0;
+                    g_obstacles[i].life_steps = 0;
+                }
+
+                fprintf(logfile,
+                        "[B] Received %d obstacles from O.\n",
+                        count);
+                fflush(logfile);
+            }
+        }
+
+        // ------------------------------------------------------------------
+        //Handle target-set messages in B
+        // ------------------------------------------------------------------
+
+        // ----- New target set from T -----
+        if (FD_ISSET(fd_tgt, &rfds)) {
+            TargetSetMsg msg;
+            int n = read(fd_tgt, &msg, sizeof(msg));
+            if (n <= 0) {
+                mvprintw(1, 1, "[B] Target generator ended.");
+            } else {
+                int count = msg.count;
+                if (count > NUM_TARGETS) count = NUM_TARGETS;
+
+                for (int i = 0; i < count; ++i) {
+                    g_targets[i].x          = msg.tgt[i].x;
+                    g_targets[i].y          = msg.tgt[i].y;
+                    g_targets[i].life_steps = msg.tgt[i].life_steps;
+                    g_targets[i].active     = 1;
+                }
+                for (int i = count; i < NUM_TARGETS; ++i) {
+                    g_targets[i].active     = 0;
+                    g_targets[i].life_steps = 0;
+                }
+
+                fprintf(logfile,
+                        "[B] Received %d targets from T.\n",
+                        count);
+                fflush(logfile);
+            }
+        }
+
 
         // ------------------------------------------------------------------
         // 4.5) Apply wall repulsion as a virtual key (assignment-style).
@@ -715,8 +748,10 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
 
         mvaddch(sy, sx, '+'); // draw drone
 
-        // Draw 8 obstacles as 'O' in the world
+        // Drawing active obstacles as 'o' in the drone world
         for (int k = 0; k < NUM_OBSTACLES; ++k) {
+            if (!g_obstacles[k].active) continue;  // skip inactive 
+
             int ox = (int)(g_obstacles[k].x * scale_x) + main_width / 2 + 1;
             int oy = (int)(-g_obstacles[k].y * scale_y) + world_top + world_height / 2;
 
@@ -729,6 +764,22 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params)
             mvaddch(oy, ox, 'o');  // TODO: add color to make them orange
             
             attroff(COLOR_PAIR(1));
+        }
+
+        for (int k = 0; k < NUM_TARGETS; ++k) {
+            if (!g_targets[k].active) continue;
+
+            int tx = (int)(g_targets[k].x * scale_x) + main_width / 2 + 1;
+            int ty = (int)(-g_targets[k].y * scale_y) + world_top + world_height / 2;
+
+            if (tx < 1) tx = 1;
+            if (tx > main_width) tx = main_width;
+            if (ty < world_top) ty = world_top;
+            if (ty > world_bottom) ty = world_bottom;
+            
+            attron(COLOR_PAIR(2));
+            mvaddch(ty, tx, 'T');  // placeholder, later make them numbered
+            attroff(COLOR_PAIR(2));
         }
 
 

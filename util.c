@@ -196,6 +196,8 @@ void compute_repulsive_P(const DroneStateMsg *s,
         }
 
         for (int k = 0; k < num_obs; ++k) {
+            if (!obs[k].active) continue;  // skip inactive obstacles
+
             double ox = obs[k].x;
             double oy = obs[k].y;
 

@@ -12,6 +12,6 @@
 //   - fd_to_d   : write-end of pipe B->D
 //   - fd_from_d : read-end of pipe D->B
 //   - params    : simulation parameters
-void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, SimParams params);
+void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int fd_tgt, SimParams params); 
 
 #endif // SERVER_H
