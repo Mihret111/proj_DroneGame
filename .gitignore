@@ -5,9 +5,7 @@ pack
 /build
 /log
 /install
-README.md
-Architecture.md
-Makefile
+
 dynamics.o
 keyboard.o
 main.o
@@ -16,4 +14,7 @@ params.o
 server.o
 targets.o
 util.o
-.gitignore
+#.gitignore
+#README.md
+#Architecture.md
+#Makefile
