@@ -16,7 +16,6 @@ typedef struct {
     int    life_steps;  // lifetime in steps
 } Target;
 
-static Target g_targets[NUM_TARGETS];
-static double rand_in_range(double min, double max);
+Target g_targets[NUM_TARGETS];
 void run_target_process(int write_fd, SimParams params);
 #endif // TARGETS_H

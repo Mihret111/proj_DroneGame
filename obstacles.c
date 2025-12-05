@@ -1,18 +1,12 @@
 #include "headers/messages.h"
 #include "headers/params.h"
 #include "headers/obstacles.h"
-#
+#include "headers/util.h"
+
 #include <unistd.h>
 #include <stdlib.h>
 #include <time.h>
 #include <stdio.h>
-
-// Small helper: uniform random double in [min, max].
-// ---------------------------------------------------------------------
-static double rand_in_range(double min, double max) {
-    double u = (double)rand() / (double)RAND_MAX;  // u in [0,1]
-    return min + u * (max - min);                  // linear interpolation
-}
 
 void run_obstacle_process(int write_fd, SimParams params) {
     srand((unsigned)time(NULL) ^ getpid());

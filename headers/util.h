@@ -137,4 +137,8 @@ int check_target_hits(const DroneStateMsg *cur_state,
                       int                 *targets_collected,
                       int                 *last_hit_step,
                       int                  current_step);
+
+
+// Helper to perform uniform random double in [min, max].
+double rand_in_range(double min, double max);
 #endif // UTIL_H

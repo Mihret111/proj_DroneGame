@@ -2,3 +2,15 @@
 arp1
 log.txt
 pack
+
+
+Architecture.md
+Makefile
+dynamics.o
+keyboard.o
+main.o
+obstacles.o
+params.o
+server.o
+targets.o
+util.o

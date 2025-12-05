@@ -15,7 +15,6 @@ typedef struct {
     int    life_steps;  // how many state updates left before disappearing
 } Obstacle;
 
-static Obstacle g_obstacles[NUM_OBSTACLES];
+Obstacle g_obstacles[NUM_OBSTACLES];
 void run_obstacle_process(int write_fd, SimParams params) ;
-static double rand_in_range(double min, double max);
 #endif // OBSTACLES_H

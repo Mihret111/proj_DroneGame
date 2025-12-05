@@ -428,3 +428,10 @@ int check_target_hits(const DroneStateMsg *cur_state,
 
     return hits;
 }
+
+
+// Helper function to perform uniform random double in [min, max]; used in obs and target generation
+double rand_in_range(double min, double max) {
+    double u = (double)rand() / (double)RAND_MAX;  // in [0,1]
+    return min + u * (max - min);                  // linear interpolation
+}

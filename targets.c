@@ -1,6 +1,8 @@
 #include "headers/messages.h"
 #include "headers/params.h"
 #include "headers/targets.h"
+#include "headers/util.h"
+
 #include <unistd.h>
 #include <stdlib.h>
 #include <time.h>
@@ -10,14 +12,6 @@
 #include <math.h>
 
 // #define M_PI 3.14159265358979323846
-
-
-// Helper: uniform random double in [min, max].
-// ---------------------------------------------------------------------
-static double rand_in_range(double min, double max) {
-    double u = (double)rand() / (double)RAND_MAX;  // in [0,1]
-    return min + u * (max - min);                  // linear interpolation
-}
 
 void run_target_process(int write_fd, SimParams params) {
     srand((unsigned)time(NULL) ^ (getpid() << 1));
