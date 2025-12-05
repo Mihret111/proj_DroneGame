@@ -1,9 +1,16 @@
 #include "headers/messages.h"
 #include "headers/params.h"
+#include "headers/targets.h"
 #include <unistd.h>
 #include <stdlib.h>
 #include <time.h>
 #include <stdio.h>
+
+#define _GNU_SOURCE
+#include <math.h>
+
+// #define M_PI 3.14159265358979323846
+
 
 // Helper: uniform random double in [min, max].
 // ---------------------------------------------------------------------
@@ -39,7 +46,7 @@ void run_target_process(int write_fd, SimParams params) {
     // B decides whether to overwrite existing targets or ignore, depending on your logic.
     const unsigned spawn_interval_sec = 50;   // TODO tune more
     // -----------------------------------------------------------------
-while (1) {
+    while (1) {
         TargetSetMsg msg;
 
         // How many targets per batch? You can use MAX_TARGETS,

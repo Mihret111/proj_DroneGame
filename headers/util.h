@@ -9,7 +9,7 @@
 #include "params.h"   // for SimParams
 #include <stdbool.h>
 #include "obstacles.h"   // add this near the top (after guards)
-
+#include "targets.h"   
 
 
 // Print error message (with errno) and exit.
@@ -116,7 +116,7 @@ void compute_obstacles_repulsive_P(const DroneStateMsg *s,
                                    double              *Px,
                                    double              *Py);
 // Check if a point (x,y) is too close to the walls.
-static int target_too_close_to_wall(double x,
+int target_too_close_to_wall(double x,
                                     double y,
                                     const SimParams *params,
                                     double wall_margin);
@@ -127,4 +127,14 @@ int too_close_to_any_pointlike(double px,
                                const PointLike *arr,
                                int count,
                                double min_dist);
+
+// Check if the drone has "hit" any active target.
+int check_target_hits(const DroneStateMsg *cur_state,
+                      Target              *targets,
+                      int                  num_targets,
+                      const SimParams     *params,
+                      int                 *score,
+                      int                 *targets_collected,
+                      int                 *last_hit_step,
+                      int                  current_step);
 #endif // UTIL_H

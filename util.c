@@ -6,6 +6,7 @@
 #include "headers/messages.h" // for DroneStateMsg
 #include "headers/params.h"   // for SimParams
 #include "headers/obstacles.h"
+#include "headers/targets.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -331,12 +332,12 @@ void compute_wall_repulsive_P(const DroneStateMsg *s,
 
 
 // Check if a point (x,y) is too close to the walls.
-static int target_too_close_to_wall(double x,
+int target_too_close_to_wall(double x,
                                     double y,
                                     const SimParams *params,
                                     double wall_margin)
 {
-    int insp_width = 15;               // was 35
+    int insp_width = 35;               // was 35
     double wh = params->world_half;
     double mod_wh = wh - wall_margin+insp_width;   
     // Distance to right wall = wh - x (if x > 0)
@@ -374,3 +375,56 @@ int too_close_to_any_pointlike(double px,
 }
 
 
+// ------------------------------------------------------------------
+// Check if the drone has "hit" any active target.
+// If the distance between drone (cur_state) and a target is below
+// a hitting radius R_hit, we:
+//   - mark that target inactive
+//   - increment score
+//   - record last hit step
+//
+// Returns: number of targets collected in this call (0 or more).
+// ------------------------------------------------------------------
+int check_target_hits(const DroneStateMsg *cur_state,
+                      Target              *targets,
+                      int                  num_targets,
+                      const SimParams     *params,
+                      int                 *score,
+                      int                 *targets_collected,
+                      int                 *last_hit_step,
+                      int                  current_step)
+{
+    // Hitting radius in world units (tune as you like).
+    // Example: 5% of world half-range.
+    double R_hit  = params->world_half * 0.08;
+    double R_hit2 = R_hit * R_hit;
+
+    double px = cur_state->x;
+    double py = cur_state->y;
+
+    int hits = 0;
+
+    for (int i = 0; i < num_targets; ++i) {
+        if (!targets[i].active)
+            continue;
+
+        double dx = px - targets[i].x;
+        double dy = py - targets[i].y;
+        double d2 = dx*dx + dy*dy;
+
+        if (d2 <= R_hit2) {
+            // This target is hit → deactivate it
+            targets[i].active     = 0;
+            targets[i].life_steps = 0;
+
+            // Update counters if pointers provided
+            if (score)             (*score)++;
+            if (targets_collected) (*targets_collected)++;
+            if (last_hit_step)     (*last_hit_step) = current_step;
+
+            hits++;
+        }
+    }
+
+    return hits;
+}

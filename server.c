@@ -27,7 +27,11 @@
 // Global / static array of 8 obstacles
 //static Obstacle g_obstacles[NUM_OBSTACLES];
 
-#include <math.h>  // at top of server.c, if not already there
+// Scoring globals
+static int g_score             = 0;
+static int g_targets_collected = 0;
+static int g_last_hit_step     = -1;
+static int g_step_counter      = 0;
 
 
 // another helper
@@ -372,7 +376,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         }
 
         // Right inspection panel width
-        int insp_width = 15;               // was 35
+        int insp_width = 35;               // was 35
         if (max_x < insp_width + 10) {
             insp_width = max_x / 4;
             if (insp_width < 10) insp_width = 10;
@@ -583,12 +587,31 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             }
 
             cur_state = s;
+            // Increment global step counter (one more state update)
+            g_step_counter++;
 
             fprintf(logfile,
                     "STATE: x=%.2f y=%.2f vx=%.2f vy=%.2f\n",
                     s.x, s.y, s.vx, s.vy);
             fflush(logfile);
-            
+            // 1) Check for target hits (even if paused or not, you decide).
+            // It's usually more natural to only collect targets when not paused:
+            if (!paused) {
+                int hits = check_target_hits(&cur_state,
+                                            g_targets,
+                                            NUM_TARGETS,
+                                            &params,
+                                            &g_score,
+                                            &g_targets_collected,
+                                            &g_last_hit_step,
+                                            g_step_counter);
+                if (hits > 0) {
+                    fprintf(logfile,
+                            "[B] Collected %d target(s). SCORE=%d\n",
+                            hits, g_score);
+                    fflush(logfile);
+                }
+            }
             // **** ADD decrement obstacle & target lifetimes logic here ****
             // considers each time input is received from d, 1 sim time had elapsed.
             // Decrement obstacle lifetimes
@@ -659,7 +682,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                         if (too_close_to_any_pointlike(x, y,
                                (PointLike*)g_obstacles,
                                NUM_OBSTACLES,
-                               obs_clearance)){
+                               tgt_clearance)){
                             fprintf(logfile,
                                     "[B] Obstacle (%.2f, %.2f) rejected: too close to target.\n",
                                     x, y);
@@ -712,7 +735,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
 
             // Tuning for filtering:
             double wall_margin     = params.world_half * 0.20; // keep away from walls
-            double obs_clearance   = params.world_half * 0.30; // away from obstacles
+            double obs_clearance   = params.world_half * 0.15; // away from obstacles
 
             int accepted = 0;
 
@@ -732,7 +755,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                 if (too_close_to_any_pointlike(x, y,
                                (PointLike*)g_targets,
                                NUM_TARGETS,
-                               tgt_clearance)){
+                               obs_clearance)){
                     fprintf(logfile,
                             "[B] Target (%.2f,%.2f) rejected: too close to obstacles.\n",
                             x, y);
@@ -870,6 +893,14 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             mvprintw(info_y + 8, info_x, "y  = %.2f", cur_state.y);
             mvprintw(info_y + 9, info_x, "vx = %.2f", cur_state.vx);
             mvprintw(info_y +10, info_x, "vy = %.2f", cur_state.vy);
+            
+            mvprintw(info_y +12, info_x, "Score: %d", g_score);
+            mvprintw(info_y +13, info_x, "Targets collected: %d", g_targets_collected);
+            if (g_last_hit_step >= 0) {
+                mvprintw(info_y +14, info_x, "Last hit at step: %d", g_last_hit_step);
+            } else {
+                mvprintw(info_y +14, info_x, "Last hit: none");
+            }
         }
 
         refresh();

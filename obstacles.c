@@ -1,5 +1,6 @@
 #include "headers/messages.h"
 #include "headers/params.h"
+#include "headers/obstacles.h"
 #
 #include <unistd.h>
 #include <stdlib.h>

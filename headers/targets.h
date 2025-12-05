@@ -1,9 +1,13 @@
 // targets.h
 #ifndef TARGETS_H
 #define TARGETS_H
+#define _GNU_SOURCE
 
 
 #define NUM_TARGETS 5  // example number; adjust as required
+
+
+
 
 typedef struct {
     double x;
@@ -13,5 +17,6 @@ typedef struct {
 } Target;
 
 static Target g_targets[NUM_TARGETS];
+static double rand_in_range(double min, double max);
 void run_target_process(int write_fd, SimParams params);
-#endif TARGETS_H
+#endif // TARGETS_H
