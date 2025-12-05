@@ -1,16 +1,16 @@
 // messages.h
-// Central definition of the messages sent over pipes between processes.
-// This header is included by B, I, and D.
+// Definition of the messages sent over pipes between the generated processes
+// This header is included by B, I, and D
 // ===========================================
 
 #ifndef MESSAGES_H
 #define MESSAGES_H
 
-// Max numbers (match NUM_OBSTACLES / NUM_TARGETS in util.h)
+// Defines max numbers (match NUM_OBSTACLES / NUM_TARGETS in util.h)
 #define MAX_OBSTACLES 8
 #define MAX_TARGETS   8
 
-// Message: Keyboard -> Server (I -> B)
+// Defines message: Keyboard -> Server (I -> B)
 // Contains exactly one key pressed by the user.
 
 typedef struct {
@@ -18,7 +18,7 @@ typedef struct {
 } KeyMsg;
 
 
-// Message: Server -> Dynamics (B -> D)
+// Defines message: Server -> Dynamics (B -> D)
 // Contains the commanded force and a reset flag.
 
 typedef struct {
@@ -28,7 +28,7 @@ typedef struct {
 } ForceStateMsg;
 
 
-// Message: Dynamics -> Server (D -> B)
+// Defines message: Dynamics -> Server (D -> B)
 // Contains the current drone state.
 
 typedef struct {
@@ -36,11 +36,11 @@ typedef struct {
     double vx, vy;  // velocity
 } DroneStateMsg;
 
-// Message: Obstacles -> Server (O -> B)
+// Defines message: Obstacles -> Server (O -> B)
 typedef struct {
     double x;
     double y;
-    int    life_steps;  // how long this object should live (in B's update steps)
+    int    life_steps;  // defines how long the obstacle lives (in B's update steps)
 } ObstacleSpec;
 
 typedef struct {
@@ -48,11 +48,11 @@ typedef struct {
     ObstacleSpec obs[MAX_OBSTACLES];
 } ObstacleSetMsg;
 
-// Message: Targets -> Server (T -> B)
+// Defines message: Targets -> Server (T -> B)
 typedef struct {
     double x;
     double y;
-    int    life_steps;
+    int    life_steps;  // defines how long the target lives (in B's update steps)
 } TargetSpec;
 
 typedef struct {

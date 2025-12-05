@@ -1,5 +1,5 @@
 // util.c
-// shared helper functions
+// Shared helper functions
 // ======================================================================
 
 #include "headers/util.h"
@@ -14,23 +14,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// Return max of two ints.
-// ----------------------------------------------------------------------
+// Returns max of two ints.
+// ----------------------------------------------
 int imax(int a, int b) {
     return (a > b) ? a : b;
 }
 
 
-// Print error  and terminate program.
-// ----------------------------------------------------------------------
+// Prints error and terminates program.
+// ----------------------------------------------
 void die(const char *msg) {
     perror(msg);
     exit(EXIT_FAILURE);
 }
 
-// Convert a key to direction increments in the 9-key cluster.
-// The resulting increments are multiplied by force_step to build actual force.
-// ----------------------------------------------------------------------
+// Converts a key to direction increments in the 9-key cluster.
+// Multiplies resulting increments by force_step to build actual force.
+// ----------------------------------------------
 void direction_from_key(char key, double *dFx, double *dFy) {
     *dFx = 0.0;
     *dFy = 0.0;
@@ -54,14 +54,11 @@ void direction_from_key(char key, double *dFx, double *dFy) {
     }
 }
 
-// ----------------------------------------------------------------------
-// 8 discrete directions and vector helpers
-// ----------------------------------------------------------------------
-
-// 1/sqrt(2) for diagonals
+// 1/sqrt(2) 
 const double INV_SQRT2 = 0.7071067811865475;
 
-// Order is arbitrary but fixed; we also store the corresponding key.
+// Stores the corresponding key
+// ----------------------------------------------
 const Dir8 g_dir8[8] = {
     { 'w', -INV_SQRT2, +INV_SQRT2 },  // up-left
     { 'e',  0.0,        +1.0       }, // up
@@ -73,14 +70,13 @@ const Dir8 g_dir8[8] = {
     { 'v', +INV_SQRT2, -INV_SQRT2 }   // down-right
 };
 
-// Simple 2D dot product: (ax,ay) dot (bx,by)
+// Calculates simple 2D dot product: (ax,ay) dot (bx,by)
+// ----------------------------------------------
 double dot2(double ax, double ay, double bx, double by) {
     return ax * bx + ay * by;
 }
 
-// Given a vector (Px, Py), find the index (0..7) of the direction in
-// g_dir8 with largest positive dot product with (Px,Py).
-// If all dot products are <= 0, return -1.
+// ----------------------------------------------
 int best_dir8_for_vector(double Px, double Py) {
     double best_dot = 0.0;
     int    best_idx = -1;
@@ -95,32 +91,8 @@ int best_dir8_for_vector(double Px, double Py) {
     return best_idx;
 }
 
-// ----------------------------------------------------------------------
-// Wall repulsion field (Khatib-like) for the 4 borders.
-// ----------------------------------------------------------------------
-//
-// Walls are at x = ±world_half, y = ±world_half.
-// For each wall, if distance d < wall_clearance, we add a repulsive
-// magnitude ~ wall_gain * (1/d - 1/clearance) in the direction away
-// from the wall. Otherwise no contribution.
-// This is a simplified but consistent model with Latombe/Khatib-style
-// potential fields.
-//
-// Returned vector (Px,Py) is the sum of contributions from 4 walls.
-// ----------------------------------------------------------------------
-// ----------------------------------------------------------------------
-// Unified Khatib-style repulsive field from walls AND/OR obstacles.
-//
-// - Walls:
-//     x = ±world_half, y = ±world_half
-//     clearance = params->wall_clearance
-//     gain      = params->wall_gain
-//
-// - Obstacles: radial field from each point obstacle.
-//
-// You can enable/disable each contribution with include_walls,
-// include_obstacles flags.
-// ----------------------------------------------------------------------
+// Computes repulsive force
+// ----------------------------------------------
 void compute_repulsive_P(const DroneStateMsg *s,
                          const SimParams     *params,
                          const Obstacle      *obs,
@@ -148,7 +120,7 @@ void compute_repulsive_P(const DroneStateMsg *s,
                 if (d_right < eps) d_right = eps;
                 double mag = wall_gain * (1.0/d_right - 1.0/wall_clearance);
                 if (mag < 0.0) mag = 0.0;
-                // Push left
+                // Pushes left
                 *Px -= mag; // py=0 here 
             }
 
@@ -158,7 +130,7 @@ void compute_repulsive_P(const DroneStateMsg *s,
                 if (d_left < eps) d_left = eps;
                 double mag = wall_gain * (1.0/d_left - 1.0/wall_clearance);
                 if (mag < 0.0) mag = 0.0;
-                // Push right
+                // Pushes right
                 *Px += mag;
             }
 
@@ -168,7 +140,7 @@ void compute_repulsive_P(const DroneStateMsg *s,
                 if (d_top < eps) d_top = eps;
                 double mag = wall_gain * (1.0/d_top - 1.0/wall_clearance);
                 if (mag < 0.0) mag = 0.0;
-                // Push down
+                // Pushes down
                 *Py -= mag;
             }
 
@@ -178,26 +150,23 @@ void compute_repulsive_P(const DroneStateMsg *s,
                 if (d_bottom < eps) d_bottom = eps;
                 double mag = wall_gain * (1.0/d_bottom - 1.0/wall_clearance);
                 if (mag < 0.0) mag = 0.0;
-                // Push up
+                // Pushes up
                 *Py += mag;
             }
         }
     }
 
-    // ------------------ OBSTACLE REPULSION -------------------
+    // Uses fixed obstacle params derived from world size
+    // ------------------ -------------------
     if (include_obstacles && obs && num_obs > 0) {
-        // For now we use fixed obstacle params derived from world size.
-        // If you want, you can later add obs_clearance/obs_gain into SimParams.
-         const double obs_clearance = params->world_half * 0.35;
-        const double obs_gain      = 120.0;   // you said 120 behaved well
-        //const double obs_clearance = params->wall_clearance;
-        //const double obs_gain      = params-> wall_gain;
+         const double obs_clearance = params->world_half * 0.30;
+        const double obs_gain      = 120.0;   // 120 behaved well
         if (obs_clearance <= 0.0 || obs_gain <= 0.0) {
             return;
         }
 
         for (int k = 0; k < num_obs; ++k) {
-            if (!obs[k].active) continue;  // skip inactive obstacles
+            if (!obs[k].active) continue;  // Skips inactive obstacles
 
             double ox = obs[k].x;
             double oy = obs[k].y;
@@ -224,53 +193,9 @@ void compute_repulsive_P(const DroneStateMsg *s,
     }
 }
 
-
-
-/* // Walls-only wrapper (what D currently uses)
-void compute_wall_repulsive_P(const DroneStateMsg *s,
-                              const SimParams    *params,
-                              double *Px, double *Py)
-{
-    compute_repulsive_P(s, params,
-                        NULL,      // no obstacles
-                        0,
-                        true,      // include_walls
-                        false,     // include_obstacles
-                        Px, Py);
-} */
-
-// Obstacles-only wrapper (what B uses for virtual-key logic)
-void compute_obstacles_repulsive_P(const DroneStateMsg *s,
-                                   const SimParams     *params,
-                                   const Obstacle      *obs,
-                                   int                  num_obs,
-                                   double              *Px,
-                                   double              *Py)
-{
-    compute_repulsive_P(s, params,
-                        obs,
-                        num_obs,
-                        false,     // include_walls
-                        true,      // include_obstacles
-                        Px, Py);
-}
-
-//A unified function: for repulsive forces
-
-
-// ----------------------------------------------------------------------
-// Wall repulsion field (Khatib-like) for the 4 borders.
-// ----------------------------------------------------------------------
-//
-// Walls are at x = ±world_half, y = ±world_half.
-// For each wall, if distance d < wall_clearance, we add a repulsive
-// magnitude ~ wall_gain * (1/d - 1/clearance) in the direction away
-// from the wall. Otherwise no contribution.
-// This is a simplified but consistent model with Latombe/Khatib-style
-// potential fields.
-//
-// Returned vector (Px,Py) is the sum of contributions from 4 walls.
-// ----------------------------------------------------------------------
+// Computes wall repulsion force
+// Returns vector (Px,Py) as the sum of contributions for the 4 borders
+// ------------------ -------------------
 void compute_wall_repulsive_P(const DroneStateMsg *s,
                               const SimParams    *params,
                               double *Px, double *Py)
@@ -295,7 +220,7 @@ void compute_wall_repulsive_P(const DroneStateMsg *s,
         if (d_right < eps) d_right = eps;
         double mag = wall_gain * (1.0/d_right - 1.0/wall_clearance);
         if (mag < 0.0) mag = 0.0;
-        // Repulsive direction: push LEFT → (-1,0)
+        // Repulsive direction: Pushes LEFT → (-1,0)
         *Px -= mag;
     }
 
@@ -305,7 +230,7 @@ void compute_wall_repulsive_P(const DroneStateMsg *s,
         if (d_left < eps) d_left = eps;
         double mag = wall_gain * (1.0/d_left - 1.0/wall_clearance);
         if (mag < 0.0) mag = 0.0;
-        // Repulsive direction: push RIGHT → (+1,0)
+        // Repulsive direction: Pushes RIGHT → (+1,0)
         *Px += mag;
     }
 
@@ -315,7 +240,7 @@ void compute_wall_repulsive_P(const DroneStateMsg *s,
         if (d_top < eps) d_top = eps;
         double mag = wall_gain * (1.0/d_top - 1.0/wall_clearance);
         if (mag < 0.0) mag = 0.0;
-        // Repulsive direction: push DOWN → (0, -1)
+        // Repulsive direction: Pushes DOWN → (0, -1)
         *Py -= mag;
     }
 
@@ -325,24 +250,22 @@ void compute_wall_repulsive_P(const DroneStateMsg *s,
         if (d_bottom < eps) d_bottom = eps;
         double mag = wall_gain * (1.0/d_bottom - 1.0/wall_clearance);
         if (mag < 0.0) mag = 0.0;
-        // Repulsive direction: push UP → (0, +1)
+        // Repulsive direction: Pushes UP → (0, +1)
         *Py += mag;
     }
 }
 
 
-// Check if a point (x,y) is too close to the walls.
+// Checks if a point (x,y) is too close to the walls
+// ------------------ -------------------
 int target_too_close_to_wall(double x,
                                     double y,
                                     const SimParams *params,
                                     double wall_margin)
 {
-    int insp_width = 35;               // was 35
+    int insp_width = 35;              
     double wh = params->world_half;
-    double mod_wh = wh - wall_margin+insp_width;   
-    // Distance to right wall = wh - x (if x > 0)
-    // Distance to left  wall = wh + x   (if x < 0)
-    // But easiest: distance in x is wh - |x|
+    double mod_wh = wh - wall_margin+insp_width; 
     double dx_to_wall = mod_wh - fabs(x);
     double dy_to_wall = wh - fabs(y);
 
@@ -352,7 +275,8 @@ int target_too_close_to_wall(double x,
     return 0;
 }
 
-// Check if (x,y)of a target/obstacle is too close to any active obstacle/ target.. casted to the point-like struct for refactoring
+// Checks if position oftarget/obstacle is too close to any active obstacle/ target, respectively
+// ------------------ -------------------
 int too_close_to_any_pointlike(double px,
                                double py,
                                const PointLike *arr,
@@ -375,14 +299,7 @@ int too_close_to_any_pointlike(double px,
 }
 
 
-// ------------------------------------------------------------------
-// Check if the drone has "hit" any active target.
-// If the distance between drone (cur_state) and a target is below
-// a hitting radius R_hit, we:
-//   - mark that target inactive
-//   - increment score
-//   - record last hit step
-//
+// Checks if the drone has "hit" any active target.
 // Returns: number of targets collected in this call (0 or more).
 // ------------------------------------------------------------------
 int check_target_hits(const DroneStateMsg *cur_state,
@@ -394,9 +311,8 @@ int check_target_hits(const DroneStateMsg *cur_state,
                       int                 *last_hit_step,
                       int                  current_step)
 {
-    // Hitting radius in world units (tune as you like).
-    // Example: 5% of world half-range.
-    double R_hit  = params->world_half * 0.08;
+    // Hitting radius in world units
+    double R_hit  = params->world_half * 0.08;           // 8% of world half-range.
     double R_hit2 = R_hit * R_hit;
 
     double px = cur_state->x;
@@ -413,11 +329,11 @@ int check_target_hits(const DroneStateMsg *cur_state,
         double d2 = dx*dx + dy*dy;
 
         if (d2 <= R_hit2) {
-            // This target is hit → deactivate it
+            // once target is hit, deactivate it
             targets[i].active     = 0;
             targets[i].life_steps = 0;
 
-            // Update counters if pointers provided
+            // Updates counters if pointers provided
             if (score)             (*score)++;
             if (targets_collected) (*targets_collected)++;
             if (last_hit_step)     (*last_hit_step) = current_step;
@@ -430,8 +346,8 @@ int check_target_hits(const DroneStateMsg *cur_state,
 }
 
 
-// Helper function to perform uniform random double in [min, max]; used in obs and target generation
+// Helper to perform uniform random double : used in obs and target generation
 double rand_in_range(double min, double max) {
-    double u = (double)rand() / (double)RAND_MAX;  // in [0,1]
+    double u = (double)rand() / (double)RAND_MAX;  // b/n [0,1]
     return min + u * (max - min);                  // linear interpolation
 }

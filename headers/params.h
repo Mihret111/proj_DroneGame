@@ -1,27 +1,26 @@
 // params.h
-// Simulation parameters (M, K, dt, force step, world size, etc.).
-// Loaded once in main() and passed by value into B and D.
+// Defines simulation parameters 
+// Stores parameters loaded once in main() and passed by value into B and D.
 // ======================================================================
 
 #ifndef PARAMS_H
 #define PARAMS_H
 
 typedef struct {
-    double mass;        // M: mass of the drone
-    double visc;        // K: viscous friction coefficient
-    double dt;          // T: timestep (seconds)
-    double force_step;  // increment in force for each directional key
-    double world_half;  // world range: x,y ∈ [-world_half, +world_half]
+    double mass;        // Mass of the drone
+    double visc;        // Viscous friction coefficient
+    double dt;          // Timestep (seconds)
+    double force_step;  // Force increment for each directional key
+    double world_half;  // World range: x,y ∈ [-world_half, +world_half]
 
-    // These are here for future extensions (walls, obstacles etc.).
-    double wall_clearance; // distance from wall where repulsion starts
-    double wall_gain;      // strength of repulsive force
+    double wall_clearance; // Distance from wall where repulsion starts
+    double wall_gain;      // Strength of repulsive force
 } SimParams;
 
-// Fill p with sensible default values.
+// Sets default values- just in case params.txt is not found
 void init_default_params(SimParams *p);
 
-// Override defaults with values from params.txt, if present.
+// Overrides default values with values from params.txt, if present.
 void load_params_from_file(const char *filename, SimParams *p);
 
 #endif // PARAMS_H

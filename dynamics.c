@@ -1,5 +1,5 @@
 // dynamics.c
-// The dynamics process (D)
+// Defines the dynamics process (D)
 // Integrates the drone state forward in time
 // ======================================================================
 
@@ -14,11 +14,10 @@
 #include <fcntl.h>
 
 // ----------------------------------------------------------------------
-// Dynamics process:
-//   - Keeps ForceStateMsg f (current force) and DroneStateMsg s (state).
-//   - Reads new force commands from B (non-blocking).
-//   - If reset flag is set, zero state.
-//   - Integrates dynamics at fixed dt and sends s back to B each step.
+// Defines the dynamics process:
+//   - Reads ForceStateMsg from force_fd (from B)
+//   - Integrates dynamics
+//   - Sends DroneStateMsg to state_fd (to B)
 // ----------------------------------------------------------------------
 void run_dynamics_process(int force_fd, int state_fd, SimParams params) {
     setbuf(stdout, NULL);
@@ -44,7 +43,7 @@ void run_dynamics_process(int force_fd, int state_fd, SimParams params) {
     }
 
     while (1) {
-        // 1) Read any new force command from B (non-blocking).
+        // 1) Reads any new force command from B (non-blocking).
         ForceStateMsg new_f;
         int n = read(force_fd, &new_f, sizeof(new_f));
 
@@ -69,17 +68,17 @@ void run_dynamics_process(int force_fd, int state_fd, SimParams params) {
             fprintf(stderr, "[D] Partial read (%d bytes) on force pipe.\n", n);
         }
 
-        // 2) Compute wall repulsive force from current state.  <-- NEW
+        // 2) Computes wall repulsive force from current state.  <-- NEW
         double Pwx = 0.0, Pwy = 0.0;
         compute_wall_repulsive_P(&s, &params, &Pwx, &Pwy);
 
-        // Total force = user force from B + wall repulsive force.
+        // Calculates total force = user force from B + wall repulsive force.
         double Fx_total = f.Fx + Pwx;
         double Fy_total = f.Fy + Pwy;
 
 /*         double Fx_total = f.Fx;
         double Fy_total = f.Fy; */
-        // 3) Integrate dynamics with total force:
+        // 3) Integrates dynamics with total force:
         //    dv/dt = (F_total - K v)/M
         double ax = (Fx_total - K * s.vx) / M;
         double ay = (Fy_total - K * s.vy) / M;
@@ -90,13 +89,13 @@ void run_dynamics_process(int force_fd, int state_fd, SimParams params) {
         s.x  += s.vx * T;
         s.y  += s.vy * T;
 
-        // 4) Send state back to B.
+        // 4) Sends state back to B.
         if (write(state_fd, &s, sizeof(s)) == -1) {
             perror("[D] write state");
             break;
         }
 
-        // 5) Sleep until next time step.
+        // 5) Sleeps until next time step.
         struct timespec ts;
         ts.tv_sec  = 0;
         ts.tv_nsec = (long)(T * 1e9);

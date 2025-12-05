@@ -1,7 +1,7 @@
 // params.c
-// Handling parameters
-//  - Set defaults
-//  - Load from "params.txt"-style key=value file
+// Handles parameters
+//  - Sets defaults
+//  - Loads from "params.txt"-style key=value file
 // ======================================================================
 
 #include "headers/params.h"
@@ -11,12 +11,12 @@
 #include <stdlib.h>
 
 
-// Helper: trim leading and trailing whitespace in-place.
+// Helper: Trims leading and trailing whitespace in-place.
 // ----------------------------------------------------------------------
 static void trim(char *s) {
     if (!s) return;
 
-    // 1) Trim leading whitespace
+    // 1) Trims leading whitespace
     char *start = s;
     while (*start == ' ' || *start == '\t' ||
            *start == '\n' || *start == '\r')
@@ -26,7 +26,7 @@ static void trim(char *s) {
         memmove(s, start, strlen(start) + 1);
     }
 
-    // 2) Trim trailing whitespace
+    // 2) Trims trailing whitespace
     size_t len = strlen(s);
     while (len > 0 &&
            (s[len-1] == ' ' || s[len-1] == '\t' ||
@@ -36,7 +36,7 @@ static void trim(char *s) {
     }
 }
 
-// Initialize default parameters (used if no params.txt exists).
+// Initializes default parameters (used if no params.txt exists).
 // ----------------------------------------------------------------------
 void init_default_params(SimParams *p) {
     p->mass       = 1.0;
@@ -45,13 +45,13 @@ void init_default_params(SimParams *p) {
     p->force_step = 1.0;
     p->world_half = 50.0;
 
-    // unused now, but ready for walls
+    // Unused now, but ready for walls
     p->wall_clearance = 5.0;
     p->wall_gain      = 10;
 }
 
-// Load parameters from a simple "key=value" file.
-// Unknown keys are ignored. Missing file → keep defaults.
+// Loads parameters from a simple "key=value" file.
+// Ignores unknown keys. Keeps defaults if file is missing.
 // ----------------------------------------------------------------------
 void load_params_from_file(const char *filename, SimParams *p) {
     FILE *fp = fopen(filename, "r");

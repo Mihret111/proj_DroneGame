@@ -2,8 +2,10 @@
 arp1
 log.txt
 pack
-
-
+/build
+/log
+/install
+README.md
 Architecture.md
 Makefile
 dynamics.o

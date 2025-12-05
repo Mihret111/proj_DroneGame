@@ -1,10 +1,11 @@
 // server.c
-// server / blackboard process (B)
+// Defines server / blackboard process (B)
 //   - Owns global "blackboard" state: force and drone state
 //   - Listens to keys from I and states from D (via pipes)
 //   - Sends updated forces to D
+//   - Monitors obstacles and targets
 //   - Draws ncurses User Interface comprising of the drone world and an inspection window
-//   - Reacts to the commands pause 'p', reset 'R', brake 'd', quit 'q'
+//   - Reacts to the commands pause 'p', reset 'O', brake 'd', quit 'q'
 // ======================================================================
 
 #include "headers/server.h"
@@ -24,46 +25,19 @@
 #include <math.h>  // for sqrt, to be used in key mapping instead of hard code, REP
 
 //#define NUM_OBSTACLES 8
-// Global / static array of 8 obstacles
+// Defines global / static array of 8 obstacles
 //static Obstacle g_obstacles[NUM_OBSTACLES];
 
-// Scoring globals
+// Defines scoring globals
 static int g_score             = 0;
 static int g_targets_collected = 0;
 static int g_last_hit_step     = -1;
 static int g_step_counter      = 0;
 
 
-// another helper
+// Local helper functions
 
-// ----------------------------------------------------------------------
-// Send total force to D:
-//   F_total = user_force (cur_force) + obstacles repulsion (P_obs).
-// Walls repulsion is still computed in D.
-// ----------------------------------------------------------------------
-
-// ----------------------------------------------------------------------
-// Send total force to D using a "virtual key" computed from
-// the unified repulsive field (walls + obstacles).
-//
-// user_force  = persistent user force from keys (cur_force).
-// cur_state   = latest drone state from D.
-// params      = simulation params (mass, visc, force_step, world_half,
-//               wall_clearance, wall_gain, etc.).
-// obs         = array of obstacles in world coords.
-// num_obs     = number of obstacles (8).
-// fd_to_d     = pipe to dynamics process.
-// logfile     = log file for debugging.
-// reason      = small string saying why we are sending (e.g. "key", "state").
-//
-// Steps:
-//   1. compute_repulsive_P(..., include_walls=true, include_obstacles=true)
-//   2. project P onto 8 discrete directions (g_dir8).
-//   3. choose best positive dot -> virtual key direction.
-//   4. map magnitude to 1..N key steps.
-//   5. build F_vk from best_key, n_steps, force_step.
-//   6. out = user_force + F_vk, send to D.
-//   7. IMPORTANT: user_force is NOT modified.
+// Sends total force to D using a "virtual key" computed from obstacles and walls
 // ----------------------------------------------------------------------
 static void send_total_force_to_d(const ForceStateMsg *user_force,
                                   const DroneStateMsg *cur_state,
@@ -74,17 +48,17 @@ static void send_total_force_to_d(const ForceStateMsg *user_force,
                                   FILE                *logfile,
                                   const char          *reason)
 {
-    // 1) Unified continuous repulsive vector from walls + obstacles
+    // Computes repulsive force vector 
     double Px = 0.0, Py = 0.0;
     compute_repulsive_P(cur_state,
                         params,
                         obs,
                         num_obs,
-                        true,   // include_walls
+                        false,   // calculate repulsive force for obstacles here
                         true,   // include_obstacles
                         &Px, &Py);
 
-    // If very small, just send user_force alone.
+    // Sends user_force alone if very small.
     double Pnorm2 = Px*Px + Py*Py;
     if (Pnorm2 < 1e-6) {
         ForceStateMsg out = *user_force;
@@ -102,10 +76,10 @@ static void send_total_force_to_d(const ForceStateMsg *user_force,
         return;
     }
 
-    // 2) Find discrete direction that best matches P
+    // Finds discrete direction that best matches the repulsion P
     int idx = best_dir8_for_vector(Px, Py);  // util.c
     if (idx < 0) {
-        // No good direction -> fallback to user only
+        // Falls back to user-only command if no good direction
         ForceStateMsg out = *user_force;
         if (write(fd_to_d, &out, sizeof(out)) == -1) {
             perror("[B] write to D failed (no good dir)");
@@ -123,10 +97,10 @@ static void send_total_force_to_d(const ForceStateMsg *user_force,
     }
 
     char   best_key = g_dir8[idx].key;
-    double best_dot = dot2(Px, Py, g_dir8[idx].ux, g_dir8[idx].uy);
+    double best_dot = dot2(Px, Py, g_dir8[idx].ux, g_dir8[idx].uy);   // the maximum projection of P on the direction vector
 
     if (best_dot <= 0.0) {
-        // Same: fallback if projection is not positive
+        // Same: Falls back to user-only command if projection is not positive
         ForceStateMsg out = *user_force;
         if (write(fd_to_d, &out, sizeof(out)) == -1) {
             perror("[B] write to D failed (best_dot<=0)");
@@ -143,27 +117,27 @@ static void send_total_force_to_d(const ForceStateMsg *user_force,
         return;
     }
 
-    // 3) Convert best_dot into key steps
+    // Converts best_dot into key steps
     double step_force = params->force_step;
     double n_steps_f  = best_dot / (step_force + 1e-9);
 
-    int n_steps = (int)(n_steps_f + 0.5);
-/*     if (n_steps < 1) n_steps = 1;
-    if (n_steps > 3) n_steps = 3;   */// you can tune this; 3–4 is usually safe
+    int n_steps = (int)(n_steps_f + 0.5);    // round to nearest integer
+    // if (n_steps < 1) n_steps = 1;
+    // if (n_steps > 3) n_steps = 3;   // Tunable
 
-    // 4) Get direction from key
+    // Gets direction from key
     double dFx, dFy;
     direction_from_key(best_key, &dFx, &dFy);
 
     double Fvk_x = n_steps * dFx * step_force;
     double Fvk_y = n_steps * dFy * step_force;
 
-    // 5) Combine user + virtual-key repulsion
+    // Combines user + virtual-key repulsion
     ForceStateMsg out = *user_force;
     out.Fx += Fvk_x;
     out.Fy += Fvk_y;
 
-    // 6) Send to D
+    // Sends to D
     if (write(fd_to_d, &out, sizeof(out)) == -1) {
         perror("[B] write to D failed (virtual key rep)");
     } else if (logfile) {
@@ -181,10 +155,14 @@ static void send_total_force_to_d(const ForceStateMsg *user_force,
     }
 }
 
-
-
-
-
+// ----------------------------------------------------------------------
+// Runs the server process:
+//   - reads KeyStateMsg   from fd_kb (from I)
+//   - Sends ForceStateMsg to fd_to_d (to D)
+//   - Reads DroneStateMsg   from fd_from_d (from D)
+//   - Reads ObstacleMsg   from fd_obs (from B)
+//   - Reads TargetMsg   from fd_tgt (from B)
+// ----------------------------------------------------------------------
 void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int fd_tgt, SimParams params) 
 {
     // --- Initialize ncurses ---
@@ -193,7 +171,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
     noecho();
     curs_set(0);  // hide cursor
 
-    // --- Open logfile ---
+    // --- Opens logfile ---
     FILE *logfile = fopen("log.txt", "w");
     if (!logfile) {
         endwin();
@@ -201,7 +179,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
     }
 
  
-    // --- Blackboard state (shared model of the world) ---
+    // --- Defines Blackboard state (model of the world)
     ForceStateMsg cur_force;
     cur_force.Fx = 0.0;
     cur_force.Fy = 0.0;
@@ -211,15 +189,9 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
     char last_key = '?';
     bool paused = false;
 
-    // Send initial zero-force to D so it starts defined.
-/*     if (write(fd_to_d, &cur_force, sizeof(cur_force)) == -1) {
-        fclose(logfile);
-        endwin();
-        die("[B] initial write to D failed");
-    } */
-    // Replaced: send to helper rather than directly write to D
-        // Initial state is zero, so cur_state is still {0,0,0,0}.
-    // Send initial total force (which is just user=0 + obstacles repulsion).
+    // Sends to helper rather than directly write to D
+    // Initial state is zero, so cur_state is still {0,0,0,0}.
+    // Sends initial total force (which is just user=0 + obstacles repulsion).
     send_total_force_to_d(&cur_force,
                           &cur_state,
                           &params,
@@ -232,17 +204,15 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
 
     int max_y, max_x;
 
-    //needed for handling time_ince_last_hit
+    // Needed for handling time_since_last_hit
     double time_since_last_hit = 0; // for tracking time since last hit
 
     // --- Main event loop ---
     while (1) {
-        // ------------------------------------------------------------------
-        // 1) Query current terminal size (for resizing).
-        // ------------------------------------------------------------------
+        // Queries current terminal size (for resizing).
         getmaxyx(stdscr, max_y, max_x);
 
-        // Layout planning:
+        // Plans layout:
         //   - 2 top lines of info
         //   - horizontal separator
         //   - world area below
@@ -258,7 +228,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             sep_y = content_top; // in tiny terminals
         }
 
-        // Right inspection panel width
+        // Defines right inspection panel width
         int insp_width = 35;               // was 35
         if (max_x < insp_width + 10) {
             insp_width = max_x / 4;
@@ -267,42 +237,39 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         int insp_start_x = max_x - insp_width;
         if (insp_start_x < 1) insp_start_x = 1;
 
-        // World area is below separator.
+        // Defines world area below separator.
         int world_top    = sep_y + 1;
         if (world_top > content_bottom) world_top = content_top + 1;
         int world_bottom = content_bottom;
         int world_height = world_bottom - world_top + 1;
         if (world_height < 1) world_height = 1;
 
-        // Left world width.
+        // Defines left world width.
         int main_width = insp_start_x - 2;
         if (main_width < 10) main_width = 10;
 
-        // nedded to plot the colored items
+        // Needed to plot the colored items
         initscr();
         start_color();
 
-        // Enable color if terminal supports it
+        // Enables color if terminal supports it
         if (has_colors() == FALSE) {
             endwin();
             printf("Your terminal does not support colors.\n");
         return;
         }
 
-        // Define a custom colors for target and obstacles
+        // Defines custom colors for target and obstacles
         // RGB scaled 0–1000 in ncurses
         init_color(COLOR_YELLOW, 1000, 500, 0);   // For obs: Strong orange (R=1000, G=500, B=0)
         init_color(COLOR_GREEN, 0, 1000, 0);   // For targets: light green
-        // Assign color-pair IDs 1 and 2: ORANGE foreground, BLACK background
+        // Assigns color-pair IDs 1 and 2: ORANGE foreground, BLACK background
         init_pair(1, COLOR_YELLOW, COLOR_BLACK);
         init_pair(2, COLOR_GREEN, COLOR_BLACK);
        
-        // ------------------------------------------------------------------
-        // 2) Use select() to wait for data from keyboard and dynamics.
-        //    Also handle EINTR (e.g., from SIGWINCH on resize).
-        // ------------------------------------------------------------------
+        // Uses select() to wait for data from keyboard, dynamics, obstacles, and targets.
+        // Also handles EINTR (signal generated on resize to permit window resize without exiting the program).
         fd_set rfds;
-        // int maxfd = imax(fd_kb, fd_from_d) + 1;
         int maxfd = fd_kb;
         
         if (fd_from_d > maxfd) maxfd = fd_from_d;
@@ -323,7 +290,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
 
             if (sel == -1) {
                 if (errno == EINTR) {
-                    // Interrupted by signal (like resize) → retry
+                    // Retries if interrupted by signal (like resize)
                     continue;
                 } else {
                     fclose(logfile);
@@ -335,7 +302,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         }
 
         // ------------------------------------------------------------------
-        // 3) Handle keyboard input from I (if available).
+        // Handles keyboard input from I (if available).
         // ------------------------------------------------------------------
         if (FD_ISSET(fd_kb, &rfds)) {
             KeyMsg km;
@@ -348,19 +315,20 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
 
             last_key = km.key;
 
-            // (a) Global quit
+            // Handles Quit request
             if (km.key == 'q') {
                 fprintf(logfile, "QUIT requested by 'q'\n");
                 fflush(logfile);
                 break;
             }
-
-            // (b) Pause toggle
+            // ------------------------------------------------------------------
+            // Handles Pause toggle
+            // ------------------------------------------------------------------
             if (km.key == 'p') {
                 paused = !paused;
 
                 if (paused) {
-                    // When entering pause, we also zero the force.
+                    // Zeroes the force when entering pause.
                     cur_force.Fx = 0.0;
                     cur_force.Fy = 0.0;
                     cur_force.reset = 0;
@@ -378,25 +346,21 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                 }
                 fflush(logfile);
             }
-            // (c) Reset (uppercase R)
-            else if (km.key == 'R') {
-                // Reset server-side state
+            // ------------------------------------------------------------------
+            // Handles Reset (uppercase O)
+            // ------------------------------------------------------------------
+            else if (km.key == 'O') {
+                // Resets server-side state
                 cur_state.x  = 0.0;
                 cur_state.y  = 0.0;
                 cur_state.vx = 0.0;
                 cur_state.vy = 0.0;
 
-                // Reset forces
+                // Resets forces
                 cur_force.Fx = 0.0;
                 cur_force.Fy = 0.0;
-                cur_force.reset = 1; // signal D to reset its state
+                cur_force.reset = 1; // Signals D to reset its state
 
-    /*             if (write(fd_to_d, &cur_force, sizeof(cur_force)) == -1) {
-                    fclose(logfile);
-                    endwin();
-                    die("[B] write to D failed (reset)");
-                } */
-                // Replaced
                 send_total_force_to_d(&cur_force,
                       &cur_state,
                       &params,
@@ -406,35 +370,32 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                       logfile,
                       "key");
 
-                cur_force.reset = 0; // clear locally
-                paused = false;      // also unpause
+                cur_force.reset = 0; // Clears locally
+                paused = false;      // Unpauses
 
-                fprintf(logfile, "RESET requested (R)\n");
+                fprintf(logfile, "RESET requested (O)\n");
                 fflush(logfile);
             }
-            // (d) Directional keys and the break 'd'
+            // ------------------------------------------------------------------
+            // Handles Directional keys and the break 'd'
+            // ------------------------------------------------------------------
             else {
                 double dFx, dFy;
                 direction_from_key(km.key, &dFx, &dFy);
 
                 if (!paused) {
                     if (km.key == 'd') {
-                        // Brake: zero forces
+                        // Brake: Zeroes forces
                         cur_force.Fx = 0.0;
                         cur_force.Fy = 0.0;
                     } else {
-                        // Accumulate new force
+                        // Accumulates new force
                         cur_force.Fx += dFx * params.force_step;
                         cur_force.Fy += dFy * params.force_step;
                     }
 
                     cur_force.reset = 0;
 
-/*                     if (write(fd_to_d, &cur_force, sizeof(cur_force)) == -1) {
-                        fclose(logfile);
-                        endwin();
-                        die("[B] write to D failed (force)");
-                    } */
                     send_total_force_to_d(&cur_force,
                         &cur_state,
                         &params,
@@ -449,7 +410,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                             km.key, dFx, dFy, cur_force.Fx, cur_force.Fy);
                     fflush(logfile);
                 } else {
-                    // Paused → ignore directional changes (but still log)
+                    // Paused: Ignores directional changes (but still log)
                     fprintf(logfile,
                             "KEY: %c ignored (PAUSED)\n", km.key);
                     fflush(logfile);
@@ -458,7 +419,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         }
 
         // ------------------------------------------------------------------
-        // 4) Handle state updates from D (if available).
+        // 4) Handles state updates from D (if available).
         // ------------------------------------------------------------------
         if (FD_ISSET(fd_from_d, &rfds)) {
             DroneStateMsg s;
@@ -470,7 +431,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             }
 
             cur_state = s;
-            // Increment global step counter (one more state update)
+            // Increments global step counter (one more state update)
             if (!paused) {
                 g_step_counter++;
             }   
@@ -479,8 +440,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                     "STATE: x=%.2f y=%.2f vx=%.2f vy=%.2f\n",
                     s.x, s.y, s.vx, s.vy);
             fflush(logfile);
-            // 1) Check for target hits (even if paused or not, you decide).
-            // It's usually more natural to only collect targets when not paused:
+            // Checks for target hits (only when not paused)
             if (!paused) {
                 int hits = check_target_hits(&cur_state,
                                             g_targets,
@@ -497,20 +457,18 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                     fflush(logfile);
                 }
             }
-            // **** ADD decrement obstacle & target lifetimes logic here ****
-            // considers each time input is received from d, 1 sim time had elapsed.
-            // Decrement obstacle lifetimes
-            if (!paused){    // Only age obstacles & targets when simulation is running
+            // Decrements obstacles and targets lifetimes 
+            // Considers each time input is received from D, 1 sim time had elapsed
+            // Only age obstacles & targets when simulation is running
+            if (!paused){    
                 for (int i = 0; i < NUM_OBSTACLES; ++i) {
                     if (g_obstacles[i].active && g_obstacles[i].life_steps > 0) {
-                        g_obstacles[i].life_steps--;   // decrease 1 step from its lifetime
+                        g_obstacles[i].life_steps--;   // Decreases 1 step from its lifetime
                         if (g_obstacles[i].life_steps == 0) {
                             g_obstacles[i].active = 0;
                         }
                     }
                 }
-
-                // Decrement target lifetimes
                 for (int i = 0; i < NUM_TARGETS; ++i) {
                     if (g_targets[i].active && g_targets[i].life_steps > 0) {
                         g_targets[i].life_steps--;
@@ -520,7 +478,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                     }
                 }
             }
-            // Then, send updated total force (evenif user doesn't send cmd) (user + obstacles)
+            // Then, sends updated total force (evenif user doesn't send cmd) (user + obstacles)
             send_total_force_to_d(&cur_force,
                                   &cur_state,
                                   &params,
@@ -533,20 +491,18 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         }
 
         // ------------------------------------------------------------------
-        //Handle obstacle-set messages in B
+        // Handles obstacle set messages from O
         // ------------------------------------------------------------------
-        
-        // ----- New obstacle set from O -----
         if (FD_ISSET(fd_obs, &rfds)) {
             ObstacleSetMsg msg;
             int n = read(fd_obs, &msg, sizeof(msg));
             if (n <= 0) {
-                // O process ended; you may log and continue
+                // if nth read, O process ended; may log and continue
                 mvprintw(0, 1, "[B] Obstacle generator ended.");
-                // optionally: fd_obs = -1 and stop using it
+                // Optionally: fd_obs = -1 and stop using it
             } else {
                 if (paused){
-                    // Read but ignore new obstacles while paused
+                    // Reads but ignores new obstacles while paused
                     fprintf(logfile,
                             "[B] Received obstacle set but PAUSED -> ignored.\n");
                     fflush(logfile);
@@ -554,7 +510,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                     int requested = msg.count;
                     if (requested > NUM_OBSTACLES) requested = NUM_OBSTACLES;
 
-                    // Use a clearance similar to what we used for targets
+                    // Uses a clearance similar to what we used for targets
                     double tgt_clearance = params.world_half * 0.15;
 
                     int accepted = 0;
@@ -563,7 +519,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                         double x = msg.obs[i].x;
                         double y = msg.obs[i].y;
 
-                        // Reject if too close to any active target
+                        // Rejects if too close to any active target
                         if (too_close_to_any_pointlike(x, y,
                                (PointLike*)g_obstacles,
                                NUM_OBSTACLES,
@@ -574,7 +530,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                             continue;
                         }
 
-                        // If accepted index is within our capacity, store it
+                        // Stores it if accepted index is within capacity
                         if (accepted < NUM_OBSTACLES) {
                             g_obstacles[accepted].x          = x;
                             g_obstacles[accepted].y          = y;
@@ -584,7 +540,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                         }
                     }
 
-                    // Deactivate remaining slots
+                    // Deactivates remaining slots
                     for (int i = accepted; i < NUM_OBSTACLES; ++i) {
                         g_obstacles[i].active     = 0;
                         g_obstacles[i].life_steps = 0;
@@ -600,10 +556,9 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         }
 
         // ------------------------------------------------------------------
-        //Handle target-set messages in B
+        // Handles target-set messages from T
         // ------------------------------------------------------------------
 
-        // ----- New target set from T -----
         if (FD_ISSET(fd_tgt, &rfds)) {
             TargetSetMsg msg;
             int n = read(fd_tgt, &msg, sizeof(msg));
@@ -628,7 +583,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                 double x = msg.tgt[i].x;
                 double y = msg.tgt[i].y;
 
-                // 1) reject if too close to walls
+                // Rejects if too close to walls
                 if (target_too_close_to_wall(x, y, &params, wall_margin)) {
                     fprintf(logfile,
                             "[B] Target (%.2f,%.2f) rejected: too close to walls.\n",
@@ -636,7 +591,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                     continue;
                 }
 
-                // 2) reject if too close to obstacles
+                // Rejects if too close to obstacles
                 if (too_close_to_any_pointlike(x, y,
                                (PointLike*)g_targets,
                                NUM_TARGETS,
@@ -647,7 +602,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                     continue;
                 }
 
-                // If we get here, target is acceptable.
+                // Accepts target if it passed the above checks
                 if (accepted < NUM_TARGETS) {
                     g_targets[accepted].x          = x;
                     g_targets[accepted].y          = y;
@@ -657,7 +612,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                 }
             }
 
-            // Deactivate remaining slots
+            // Deactivates remaining slots
             for (int i = accepted; i < NUM_TARGETS; ++i) {
                 g_targets[i].active     = 0;
                 g_targets[i].life_steps = 0;
@@ -671,30 +626,15 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
     }
 
 }
-
-
         // ------------------------------------------------------------------
-        // 4.5) Apply wall repulsion as a virtual key (assignment-style).
-        //      This uses the current state and params to compute a repulsive
-        //      vector P from the walls, then projects it onto the 8 key
-        //      directions and applies a "virtual key" to cur_force.
-        // ------------------------------------------------------------------
-/*         apply_wall_repulsion_virtual_key(&cur_force,
-                                         &cur_state,
-                                         &params,
-                                         fd_to_d,
-                                         logfile,
-                                         paused);
- */
-        // ------------------------------------------------------------------
-        // 5) Draw UI (world + inspection panel).
+        // Draws UI (drone world + inspection panel)
         // ------------------------------------------------------------------
         erase();
         box(stdscr, 0, 0);
 
         // Top info lines
         mvprintw(top_info_y1, 2,
-                 "Controls: w e r / s d f / x c v | d=brake, p=pause, R=reset, q=quit");
+                 "Controls: w e r / s d f / x c v | d=brake, p=pause, O=reset, q=quit");
         mvprintw(top_info_y2, 2,
                  "Paused: %s", paused ? "YES" : "NO");
 
@@ -715,7 +655,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
 
         // WORLD DRAWING (left)
         double world_half = params.world_half;
-        double scale_x = main_width  / (2.0 * world_half);   // mapping world coordinates to the drone world on the display scree
+        double scale_x = main_width  / (2.0 * world_half);        // Maps world coordinates to the drone world on the display scree
         double scale_y = world_height / (2.0 * world_half);
         if (scale_x <= 0) scale_x = 1.0;
         if (scale_y <= 0) scale_y = 1.0;
@@ -728,11 +668,11 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         if (sy < world_top) sy = world_top;
         if (sy > world_bottom) sy = world_bottom;
 
-        mvaddch(sy, sx, '+'); // draw drone
+        mvaddch(sy, sx, '+'); // Draws drone
 
-        // Drawing active obstacles as 'o' in the drone world
+        // Draws active obstacles as 'o' in the drone world
         for (int k = 0; k < NUM_OBSTACLES; ++k) {
-            if (!g_obstacles[k].active) continue;  // skip inactive 
+            if (!g_obstacles[k].active) continue;  // Skips inactive 
 
             int ox = (int)(g_obstacles[k].x * scale_x) + main_width / 2 + 1;
             int oy = (int)(-g_obstacles[k].y * scale_y) + world_top + world_height / 2;
@@ -743,7 +683,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             if (oy > world_bottom) oy = world_bottom;
             
             attron(COLOR_PAIR(1));
-            mvaddch(oy, ox, 'o');  // TODO: add color to make them orange
+            mvaddch(oy, ox, 'o');  // TODO: Adds color to make them orange
             
             attroff(COLOR_PAIR(1));
         }
@@ -760,7 +700,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             if (ty > world_bottom) ty = world_bottom;
             
             attron(COLOR_PAIR(2));
-            mvaddch(ty, tx, 'T');  // placeholder, later make them numbered
+            mvaddch(ty, tx, 'T');  // Placeholder, later make them numbered
             attroff(COLOR_PAIR(2));
         }
 
@@ -796,7 +736,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         refresh();
     }
 
-    // --- Cleanup ---
+    // Final cleanup
     fclose(logfile);
     endwin();
     close(fd_kb);

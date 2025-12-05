@@ -1,5 +1,5 @@
 // server.h
-// Interface for the server/blackboard process (B).
+// Defines interface for the server/blackboard process (B).
 // ======================================================================
 
 #ifndef SERVER_H
@@ -7,7 +7,7 @@
 
 #include "params.h"
 
-// Run the server process:
+// Runs the server process:
 //   - fd_kb     : read-end of pipe I->B
 //   - fd_to_d   : write-end of pipe B->D
 //   - fd_from_d : read-end of pipe D->B
