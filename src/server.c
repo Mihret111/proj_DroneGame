@@ -38,6 +38,14 @@ static int g_targets_collected = 0;
 static int g_last_hit_step     = -1;
 static int g_step_counter      = 0;
 
+// blinking warning banner globals
+static int  wd_warning_active = 0;   // warning state ON/OFF
+static int  wd_blink_phase   = 0;   // 0 or 1 (visible / invisible)
+static int  wd_blink_counter = 0;   // counts simulation steps
+
+static int wd_blink_ticks = 0;
+
+
 // ---------------- Watchdog signal flags (set by signal handlers) ----------------
 static volatile sig_atomic_t g_wd_warning_flag = 0; // set by SIGUSR2 handler
 static volatile sig_atomic_t g_wd_stop    = 0;  // set when SIGTERM arrives
@@ -55,9 +63,7 @@ static void on_watchdog_stop(int signo) {
 // ---------------- Watchdog banner UI state ----------------
 // Show a warning banner for a limited amount of time after SIGUSR2
 // We store it as "how many simulation steps remaining" to show the banner.
-
-static int g_wd_banner_steps_left = 0;  // countdown managed in main loop
-static const char *g_wd_banner_msg = NULL;
+static char watchdog_banner_msg[] = "WATCHDOG WARNING, system may be unstable"; 
 
 /**
  * @brief Main function for the Server (B) process.
@@ -168,16 +174,16 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         if (g_wd_warning_flag) {
             g_wd_warning_flag = 0;
 
-            // 2 seconds worth of steps (at least 1 step)
-            int steps_2sec = (int)(2.0 / params.dt);
-            if (steps_2sec < 1) steps_2sec = 1;
+            // Start blinking warning until SIGTERM arrives.
+            wd_warning_active = 1;
+            wd_blink_phase    = 1;   // start "visible"
+            wd_blink_counter  = 0;
+            wd_blink_ticks    = 0;
 
-            g_wd_banner_steps_left = steps_2sec;
-            g_wd_banner_msg = "WATCHDOG WARNING: no heartbeat detected (system may be stuck)";
-
-            fprintf(logfile, "[B] WATCHDOG WARNING banner started (%d steps ~ 2s)\n", steps_2sec);
+            fprintf(logfile, "[B] WATCHDOG WARNING: blinking ON\n");
             fflush(logfile);
         }
+
 
 
         if (g_wd_stop) {
@@ -244,7 +250,27 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             FD_SET(fd_obs,    &rfds);
             FD_SET(fd_tgt,    &rfds);
 
-            sel = select(maxfd, &rfds, NULL, NULL, NULL);
+            // sel = select(maxfd, &rfds, NULL, NULL, NULL);
+            struct timeval tv;
+            tv.tv_sec  = 0;
+            tv.tv_usec = 100000; // 100 ms
+
+            sel = select(maxfd, &rfds, NULL, NULL, &tv);
+
+            if (sel == 0) {
+                if (wd_warning_active && !paused) {
+                    wd_blink_ticks++;
+
+                    // blink every 5 ticks -> 5 * 100ms = 500ms
+                    if (wd_blink_ticks >= 5) {
+                        wd_blink_ticks = 0;
+                        wd_blink_phase = !wd_blink_phase;
+                    }
+                }
+
+
+
+                }
 
             if (sel == -1) {
                 if (errno == EINTR) {
@@ -405,14 +431,6 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                 g_step_counter++;
             }   
 
-            // Decrement watchdog banner countdown on each simulation step (done only when running)
-            if (!paused && g_wd_banner_steps_left > 0) {
-                g_wd_banner_steps_left--;
-                if (g_wd_banner_steps_left == 0) {
-                    g_wd_banner_msg = NULL;
-                }
-            }
-
             // Logs state
             fprintf(logfile,
                     "STATE: x=%.2f y=%.2f vx=%.2f vy=%.2f\n",
@@ -456,6 +474,23 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                     }
                 }
             }
+            // Update blinking phase only while running (not paused)
+            if (wd_warning_active && !paused) {
+                wd_blink_counter++;
+
+                // Blink period in seconds:
+                const double BLINK_PERIOD_SEC = 0.5; // 0.5s ON/OFF toggle
+
+                int blink_steps = (int)(BLINK_PERIOD_SEC / params.dt);
+                if (blink_steps < 1) blink_steps = 1;
+
+                if (wd_blink_counter >= blink_steps) {
+                    wd_blink_counter = 0;
+                    wd_blink_phase = !wd_blink_phase; // toggle
+                }
+            }
+
+
             // Then, sends updated total force (evenif user doesn't send cmd) (user + obstacles)
             send_total_force_to_d(&cur_force,
                                   &cur_state,
@@ -615,14 +650,14 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                  "Controls: w e r / s d f / x c v | d=brake, p=pause, O=reset, q=quit");
         mvprintw(top_info_y2, 2,
                  "Paused: %s", paused ? "YES" : "NO");
-        // watchdog status     
-
-        // If watchdog banner active, print it after "Paused"
-        if (g_wd_banner_steps_left > 0 && g_wd_banner_msg != NULL) {
-            // Displays a visible banner
-            // "WD: WARNING" is now more explicit
-            mvprintw(top_info_y2, 18, "WD: %s", g_wd_banner_msg);
+           
+        // Watchdog blinking warning: visible only when active AND blink phase is ON
+        if (wd_warning_active && wd_blink_phase) {
+            attron(A_BOLD | A_REVERSE);
+            mvprintw(top_info_y2, 18, " %s ", watchdog_banner_msg);
+            attroff(A_BOLD | A_REVERSE);
         }
+
 
         
 

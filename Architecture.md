@@ -120,7 +120,8 @@ graph TD
     - `check_target_hits()` for scoring  
     - distance filtering functions  
     - random sampling helpers  
-    - direction-vector utilities for virtual keys  
+    - direction-vector utilities for virtual keys 
+    - logging handlers for processes
 
 
 ## 2.8 Watchdog Process (W)
