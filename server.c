@@ -69,19 +69,33 @@ static const char *g_wd_banner_msg = NULL;
 // ----------------------------------------------------------------------
 void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int fd_tgt, pid_t pid_W, SimParams params) 
 {
-    fprintf(stderr, "[B] Server started | PID = %d\n", getpid());
-
+    // --- Opens logfile ---
+    FILE *logfile = open_process_log("server", "B");
+    if (!logfile) {
+        endwin();
+        die("[B] cannot open logs/server.log");
+    }
     // --- Initialize ncurses ---
     initscr();
     cbreak();
     noecho();
     curs_set(0);  // hide cursor
 
-    // --- Opens logfile ---
-    FILE *logfile = fopen("log.txt", "w");
-    if (!logfile) {
-        endwin();
-        die("[B] cannot open log.txt");
+    // ---- ncurses color init (DO THIS ONCE) ----
+    if (has_colors()) {
+        start_color();
+
+        // Only attempt init_color if terminal supports changing colors.
+        if (can_change_color()) {
+            init_color(COLOR_YELLOW, 1000, 500, 0); // orange-ish
+            init_color(COLOR_GREEN,  0, 1000, 0);   // green
+        }
+
+        init_pair(1, COLOR_YELLOW, COLOR_BLACK); // obstacles
+        init_pair(2, COLOR_GREEN,  COLOR_BLACK); // targets
+    } else {
+        // No colors: we continue without colors (DO NOT EXIT).
+        // The sim should still run.
     }
 
     // ---------------- Install signal handlers for Watchdog ----------------
@@ -201,26 +215,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         int main_width = insp_start_x - 2;
         if (main_width < 10) main_width = 10;
 
-        // Needed to plot the colored items
-        // initscr();
-        start_color();
-
-        // Enables color if terminal supports it
-        if (has_colors() == FALSE) {
-            endwin();
-            printf("Your terminal does not support colors.\n");
-        return;
-        }
-
-        // Defines custom colors for target and obstacles
-        // RGB scaled 0–1000 in ncurses
-        init_color(COLOR_YELLOW, 1000, 500, 0);   // For obs: Strong orange (R=1000, G=500, B=0)
-        init_color(COLOR_GREEN, 0, 1000, 0);   // For targets: light green
-        // Assigns color-pair IDs 1 and 2: ORANGE foreground, BLACK background
-        init_pair(1, COLOR_YELLOW, COLOR_BLACK);
-        init_pair(2, COLOR_GREEN, COLOR_BLACK);
-       
-        // Uses select() to wait for data from keyboard, dynamics, obstacles, and targets.
+        // ---------------- Uses select() to wait for events ----------------        // Uses select() to wait for data from keyboard, dynamics, obstacles, and targets.
         // Also handles EINTR (signal generated on resize to permit window resize without exiting the program).
         fd_set rfds;
         int maxfd = fd_kb;
@@ -377,18 +372,19 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         if (FD_ISSET(fd_from_d, &rfds)) {
             DroneStateMsg s;
             int n = read(fd_from_d, &s, sizeof(s));
-
-            // Heartbeat to watchdog: "system is alive and working"
-            if (pid_W > 0) {
-                kill(pid_W, SIGUSR1);
-            }
-
-            // Handles EOF from D
-            if (n <= 0) {
+            if (n == (int)sizeof(s)) {
+                if (pid_W > 0) kill(pid_W, SIGUSR1);
+            } else if (n <= 0) {
                 mvprintw(1, 1, "[B] Dynamics process ended (EOF).");
                 refresh();
                 break;
+            } else {
+                // partial read (should not happen with pipes + small struct, but handle anyway)
+                fprintf(logfile, "[B] Partial read from D: %d bytes\n", n);
+                fflush(logfile);
+                continue;
             }
+
 
 
             // Updates current state
@@ -719,10 +715,15 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
     }
 
     // Final cleanup
-    fclose(logfile);
+    if (logfile) {
+        fprintf(logfile, "[B] Exiting.\n");
+        fclose(logfile);
+    }
+    // Ends ncurses
     endwin();
+    // Closes pipes
     close(fd_kb);
     close(fd_to_d);
     close(fd_from_d);
-    exit(EXIT_SUCCESS);
+    exit(EXIT_SUCCESS); 
 }

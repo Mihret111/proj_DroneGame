@@ -4,6 +4,9 @@ log.txt
 pack
 /build
 /log
+/logs
+run.err
+
 /install
 
 dynamics.o

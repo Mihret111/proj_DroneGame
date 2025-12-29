@@ -10,8 +10,10 @@
 //   - If no heartbeat for kill_sec: send SIGTERM to all processes (stop system).
 //
 // Why signals:
-//   - Assignment says W is signal-based.
+//   - W is signal-based.
 //   - Heartbeat = "I'm alive" → classic SIGUSR1 usage.
+
+#define _POSIX_C_SOURCE 200809L
 
 #include "headers/watchdog.h"
 #include "headers/util.h"   // die()
@@ -49,16 +51,16 @@ static double ts_to_sec(const struct timespec *ts) {
 }
 
 void run_watchdog_process(int cfg_read_fd, int warn_sec, int kill_sec) {
-    fprintf(stderr, "[W] Watchdog started | PID = %d\n", getpid());
-
-    // 1) Open watchdog log (each process logs its own stuff = good for Assignment 2)
-    FILE *log = fopen("logs/watchdog.log", "w");
+    
+    // 1) Open watchdog log file
+    FILE *log = open_process_log("watchdog", "W");
     if (!log) {
-        // If logs/ doesn't exist, we still shouldn't crash silently
-        // but we also can't use ncurses here, so just stderr.
-        perror("[W] fopen logs/watchdog.log");
-        // fallback to stderr only
+        // If logs/ doesn't exist, don't crash silently
+        perror("[W] fopen logs/watchdog.log");       // print to stderr
+        // exit(EXIT_FAILURE);
     }
+
+    fprintf(log, "[W] Watchdog started | PID = %d\n", getpid());
 
     // 2) Read the PIDs struct from master (one-time configuration)
     WatchPids p;
@@ -79,9 +81,9 @@ void run_watchdog_process(int cfg_read_fd, int warn_sec, int kill_sec) {
     }
 
     // 3) Install signal handler for heartbeat (SIGUSR1)
-    struct sigaction sa;
+    struct sigaction sa; 
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = on_sigusr1;
+    sa.sa_handler = on_sigusr1; 
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_RESTART; // restart interrupted syscalls where possible
 

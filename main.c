@@ -25,6 +25,9 @@
 
 
 int main(void) {
+    // Ensures logs/ directory exists
+    ensure_logs_dir();
+
     // 1) Loads parameters BEFORE forking so children inherit the struct.
     SimParams params;
     init_default_params(&params);
@@ -141,7 +144,7 @@ int main(void) {
         close(pipe_T_to_B[0]); close(pipe_T_to_B[1]);
 
         // warn after 2 sec no heartbeat, kill after 5 sec
-        run_watchdog_process(pipe_CFG_to_W[0], 2, 5);
+        run_watchdog_process(pipe_CFG_to_W[0], 2, 15);
     }
 
     // 8) PARENT: Becomes Server B

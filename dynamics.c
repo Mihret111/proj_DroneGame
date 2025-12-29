@@ -20,8 +20,15 @@
 //   - Sends DroneStateMsg to state_fd (to B)
 // ----------------------------------------------------------------------
 void run_dynamics_process(int force_fd, int state_fd, SimParams params) {
+    FILE *log = open_process_log("dynamics", "D");
+    if (!log) {
+        // If log fails, still run; or exit. I recommend exit for assignment clarity:
+        fprintf(stderr, "[D] cannot open dynamics log\n");
+        // exit(EXIT_FAILURE);
+    }
+
     setbuf(stdout, NULL);
-    fprintf(stderr,
+    fprintf(log,
             "[D] Dynamics process started | PID = %d\n, M=%.3f, K=%.3f, dt=%.3f\n",
             getpid(), params.mass, params.visc, params.dt);
 
@@ -39,6 +46,7 @@ void run_dynamics_process(int force_fd, int state_fd, SimParams params) {
     int flags = fcntl(force_fd, F_GETFL, 0);
     if (flags == -1) flags = 0;
     if (fcntl(force_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
+        fprintf(log, "[D] fcntl O_NONBLOCK failed\n");
         perror("[D] fcntl O_NONBLOCK");
     }
 
@@ -57,15 +65,16 @@ void run_dynamics_process(int force_fd, int state_fd, SimParams params) {
             f = new_f;
             f.reset = 0;
         } else if (n == 0) {
-            fprintf(stderr, "[D] EOF on force pipe, exiting.\n");
+            fprintf(log, "[D] EOF on force pipe, exiting.\n");
             break;
         } else if (n < 0) {
             if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                fprintf(log, "[D] read error on force pipe, exiting.\n");
                 perror("[D] read");
                 break;
             }
         } else {
-            fprintf(stderr, "[D] Partial read (%d bytes) on force pipe.\n", n);
+            fprintf(log, "[D] Partial read (%d bytes) on force pipe.\n", n);
         }
 
         // Computes wall repulsive force from current state

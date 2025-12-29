@@ -17,7 +17,10 @@ Obstacle g_obstacles[NUM_OBSTACLES];
 //   - Spawns obstacles at regular intervals
 // ----------------------------------------------------------------------
 void run_obstacle_process(int write_fd, SimParams params) {
-    fprintf(stderr, "[O] Obstacles started | PID = %d\n", getpid());
+    FILE *log = open_process_log("obstacles", "O");
+    if (!log) log = stderr;   // <-- don't die, just log to stderr
+
+    fprintf(log, "[O] Obstacles started | PID = %d\n", getpid());
     
     srand((unsigned)time(NULL) ^ getpid());
 
@@ -102,10 +105,19 @@ void run_obstacle_process(int write_fd, SimParams params) {
             break;  // exit the loop -> process ends
         }
 
+        // Logs the sending event
+        fprintf(log, "[O] sending batch count=%d life_steps=%d ...\n", msg.count, msg.obs[0].life_steps);
+        fflush(log);
+
         // Waits a while before attempting to spawn the next batch.
         sleep(spawn_interval_sec);
     }
-
+    // Final cleanup
+    if (log) {
+        fprintf(log, "[O] Exiting.\n");
+        fclose(log);
+    }
+    // Closes pipe to B
     close(write_fd);
     _exit(EXIT_SUCCESS);
 }

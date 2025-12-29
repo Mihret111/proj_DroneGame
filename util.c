@@ -14,6 +14,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <sys/stat.h>   // mkdir
+#include <sys/types.h>
+#include <time.h>       // time(), localtime_r, strftime
+#include <errno.h>
+#include <string.h>
+#include <unistd.h>     // getpid
+
+
 // Returns max of two ints.
 // ----------------------------------------------
 int imax(int a, int b) {
@@ -417,4 +425,51 @@ int too_close_to_any_pointlike(double px,
             return 1;
     }
     return 0;
+}
+
+// ------------------ --------------------------------------------------------------
+// Logging utilities
+// ------------------ --------------------------------------------------------------
+
+void ensure_logs_dir(void) {
+    // mkdir("logs", 0755) fails if already exists → that's fine.
+    if (mkdir("logs", 0755) == -1) {
+        if (errno != EEXIST) {
+            // Can't call die() if you want non-fatal, but for assignment it's OK to fail loudly.
+            perror("[LOG] mkdir logs failed");
+        }
+    }
+}
+
+static void timestamp_now(char *buf, size_t buflen) {
+    // Readable timestamp
+    time_t t = time(NULL);
+    struct tm tm;
+    localtime_r(&t, &tm);
+    strftime(buf, buflen, "%Y-%m-%d %H:%M:%S", &tm);
+}
+
+FILE *open_process_log(const char *name, const char *role_tag) {
+    ensure_logs_dir();
+
+    char path[256];
+    snprintf(path, sizeof(path), "logs/%s.log", name);
+
+    FILE *fp = fopen(path, "w");
+    if (!fp) {
+        fprintf(stderr, "[%s] ERROR: cannot open %s: %s\n",
+                role_tag, path, strerror(errno));
+        return NULL; // caller decides what to do
+    }
+
+    // Line-buffered = each '\n' flushes automatically when output is a terminal,
+    // but for files we still want frequent flush behavior.
+    setvbuf(fp, NULL, _IOLBF, 0);
+
+    char ts[64];
+    timestamp_now(ts, sizeof(ts));
+
+    fprintf(fp, "[%s] START  pid=%d  time=%s\n", role_tag, (int)getpid(), ts);
+    fflush(fp);
+    return fp;
 }

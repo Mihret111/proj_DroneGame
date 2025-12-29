@@ -20,7 +20,11 @@ Target g_targets[NUM_TARGETS];
 //   - Spawns targets at regular intervals
 // ----------------------------------------------------------------------
 void run_target_process(int write_fd, SimParams params) {
-    fprintf(stderr, "[T] Targets started | PID = %d\n", getpid());
+    // opens log file
+    FILE *log = open_process_log("targets", "T");
+    if (!log) log = stderr;   // <-- don't die, just log to stderr
+
+    fprintf(log, "[T] Targets started | PID = %d\n", getpid());
     srand((unsigned)time(NULL) ^ (getpid() << 1));
 
     double world_half = params.world_half;
@@ -113,10 +117,19 @@ void run_target_process(int write_fd, SimParams params) {
             break;
         }
 
+        // Logs the sending event
+        fprintf(log, "[T] sending batch count=%d ...\n", msg.count);
+        fflush(log);
+
+
         // Waits before generating the next batch.
         sleep(spawn_interval_sec);
     }
-
+    // Final cleanup
+    if (log) {
+        fprintf(log, "[T] Exiting.\n");
+        fclose(log);
+    }
     close(write_fd);
     _exit(EXIT_SUCCESS);
 }

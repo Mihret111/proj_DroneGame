@@ -4,6 +4,7 @@
 // ======================================================================
 
 #include "headers/messages.h"
+#include "headers/util.h"
 
 #include <stdio.h>
 #include <unistd.h>
@@ -16,39 +17,51 @@
 //   - Exits on EOF or 'q'.
 // ----------------------------------------------------------------------
 void run_keyboard_process(int write_fd) {
-    fprintf(stderr, "[I] Keyboard started | PID = %d\n", getpid());
+    // Opens log file
+    FILE *log = open_process_log("keyboard", "I");
+    if (!log) log = stderr;   // <-- don't die, just log to stderr
+    fprintf(log, "[I] Keyboard started | PID = %d\n", getpid());
+    fprintf(log,
+    "[I] Use w e r / s d f / x c v to command force.\n"
+    "[I] 'd' = brake, 'p' = pause, 'O' = reset, 'q' = quit.\n");
+    fflush(log);
 
     // Unbuffers stdout so debug messages appear immediately.
     setbuf(stdout, NULL);
 
-    fprintf(stderr,
-        "[I] Keyboard process started.\n"
-        "[I] Use w e r / s d f / x c v to command force.\n"
-        "[I] 'd' = brake, 'p' = pause, 'O' = reset, 'q' = quit.\n");
 
     while (1) {
-        int c = getchar(); // blocking read from stdin
+        // reads one character from stdin
+        int c = getchar(); // blocking read 
 
         if (c == EOF) {
-            fprintf(stderr, "[I] EOF on stdin, exiting keyboard process.\n");
+            fprintf(log, "[I] EOF on stdin, exiting keyboard process.\n");
             break;
         }
 
         KeyMsg km;
         km.key = (char)c;
+        fprintf(log, "[I] key='%c' (%d)\n", km.key, (int)km.key);
+
 
         // Sends key to B through pipe.
         if (write(write_fd, &km, sizeof(km)) == -1) {
-            perror("[I] write to B failed");
+            fprintf(log, "[I] write to B failed");
+
             break;
         }
 
         if (km.key == 'q') {
-            fprintf(stderr, "[I] 'q' pressed, exiting keyboard process.\n");
+            fprintf(log, "[I] 'q' pressed, exiting keyboard process.\n");
             break;
         }
     }
-
+    // Final cleanup
+    if (log) {
+        fprintf(log, "[I] Exiting.\n");
+        fclose(log);
+    }
+    // Closes pipe to B 
     close(write_fd);
-    exit(EXIT_SUCCESS);
+    exit(EXIT_SUCCESS);  
 }

@@ -104,4 +104,12 @@ int check_target_hits(const DroneStateMsg *cur_state,
 
 // Helper to perform uniform random double in [min, max].
 double rand_in_range(double min, double max);
+
+// Logging utilities:
+// Ensure logs/ directory exists (mkdir -p logs).
+void ensure_logs_dir(void);
+
+// Open a process log file under logs/<name>.log with line buffering.
+FILE* open_process_log(const char *name, const char *role_tag);
+
 #endif // UTIL_H
