@@ -17,6 +17,8 @@ Obstacle g_obstacles[NUM_OBSTACLES];
 //   - Spawns obstacles at regular intervals
 // ----------------------------------------------------------------------
 void run_obstacle_process(int write_fd, SimParams params) {
+    fprintf(stderr, "[O] Obstacles started | PID = %d\n", getpid());
+    
     srand((unsigned)time(NULL) ^ getpid());
 
     double world_half = params.world_half;

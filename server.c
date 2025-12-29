@@ -69,6 +69,8 @@ static const char *g_wd_banner_msg = NULL;
 // ----------------------------------------------------------------------
 void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int fd_tgt, pid_t pid_W, SimParams params) 
 {
+    fprintf(stderr, "[B] Server started | PID = %d\n", getpid());
+
     // --- Initialize ncurses ---
     initscr();
     cbreak();

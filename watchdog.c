@@ -49,6 +49,8 @@ static double ts_to_sec(const struct timespec *ts) {
 }
 
 void run_watchdog_process(int cfg_read_fd, int warn_sec, int kill_sec) {
+    fprintf(stderr, "[W] Watchdog started | PID = %d\n", getpid());
+
     // 1) Open watchdog log (each process logs its own stuff = good for Assignment 2)
     FILE *log = fopen("logs/watchdog.log", "w");
     if (!log) {

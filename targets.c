@@ -20,6 +20,7 @@ Target g_targets[NUM_TARGETS];
 //   - Spawns targets at regular intervals
 // ----------------------------------------------------------------------
 void run_target_process(int write_fd, SimParams params) {
+    fprintf(stderr, "[T] Targets started | PID = %d\n", getpid());
     srand((unsigned)time(NULL) ^ (getpid() << 1));
 
     double world_half = params.world_half;

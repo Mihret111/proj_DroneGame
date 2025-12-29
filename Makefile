@@ -4,7 +4,7 @@ LDFLAGS = -lncurses -lm
 TARGET = arp1
 
 # Source files
-SRCS = main.c server.c dynamics.c keyboard.c obstacles.c targets.c params.c util.c
+SRCS = main.c server.c dynamics.c keyboard.c obstacles.c targets.c watchdog.c params.c util.c
 
 # Object files
 OBJS = $(SRCS:.c=.o)

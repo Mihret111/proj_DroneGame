@@ -22,8 +22,8 @@
 void run_dynamics_process(int force_fd, int state_fd, SimParams params) {
     setbuf(stdout, NULL);
     fprintf(stderr,
-            "[D] Dynamics process started. M=%.3f, K=%.3f, dt=%.3f\n",
-            params.mass, params.visc, params.dt);
+            "[D] Dynamics process started | PID = %d\n, M=%.3f, K=%.3f, dt=%.3f\n",
+            getpid(), params.mass, params.visc, params.dt);
 
     double M = params.mass;
     double K = params.visc;

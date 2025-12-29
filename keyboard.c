@@ -16,6 +16,8 @@
 //   - Exits on EOF or 'q'.
 // ----------------------------------------------------------------------
 void run_keyboard_process(int write_fd) {
+    fprintf(stderr, "[I] Keyboard started | PID = %d\n", getpid());
+
     // Unbuffers stdout so debug messages appear immediately.
     setbuf(stdout, NULL);
 
