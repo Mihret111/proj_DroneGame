@@ -10,9 +10,6 @@
 
 #define _POSIX_C_SOURCE 200809L
 #include <headers/runmode.h>
-#include <headers/net.h>
-#include <sys/ioctl.h>
-#include <termios.h>
 
 #include <signal.h>
 #include <string.h>
@@ -120,6 +117,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         endwin();
         die("[B] cannot open logs/server.log");
     }
+
     // Initialize heartbeat tracking
     set_last_hb_now(); // assume "alive" at start
 
@@ -264,26 +262,29 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         int main_width = insp_start_x - 2;
         if (main_width < 10) main_width = 10;
 
-        // ---------------- Uses select() to wait for events ----------------        // Uses select() to wait for data from keyboard, dynamics, obstacles, and targets.
+        // ---------------- Uses select() to wait for events ----------------        // Uses select() to wait for data from keyboard, dynamics, obstacles, and targets
         // Also handles EINTR (signal generated on resize to permit window resize without exiting the program).
         fd_set rfds;
-        int maxfd = fd_kb;
-        
-        if (fd_from_d > maxfd) maxfd = fd_from_d;
-        if (fd_obs    > maxfd) maxfd = fd_obs;
-        if (fd_tgt    > maxfd) maxfd = fd_tgt;
-        maxfd += 1;
 
+        /* maxfd is "highest fd + 1" for select() */
+        int maxfd = -1;
+
+        if (fd_kb >= 0 && fd_kb > maxfd)       maxfd = fd_kb;
+        if (fd_from_d >= 0 && fd_from_d > maxfd) maxfd = fd_from_d;
+        if (fd_obs >= 0 && fd_obs > maxfd)     maxfd = fd_obs;
+        if (fd_tgt >= 0 && fd_tgt > maxfd)     maxfd = fd_tgt;
+
+        maxfd += 1;   // maxfd is "highest fd + 1" for select()
         int sel;
         while (1) {
             FD_ZERO(&rfds);
-            FD_SET(fd_kb,     &rfds);
-            FD_SET(fd_from_d, &rfds);
-            //
-            FD_SET(fd_obs,    &rfds);
-            FD_SET(fd_tgt,    &rfds);
+            if (fd_kb >= 0)     FD_SET(fd_kb, &rfds);
+            if (fd_from_d >= 0) FD_SET(fd_from_d, &rfds);
 
-            // sel = select(maxfd, &rfds, NULL, NULL, NULL);
+            // Only add obs/tgt pipes if they exist (standalone mode)
+            if (fd_obs >= 0)    FD_SET(fd_obs, &rfds);
+            if (fd_tgt >= 0)    FD_SET(fd_tgt, &rfds);
+
             struct timeval tv;
             tv.tv_sec  = 0;
             tv.tv_usec = 100000; // 100 ms
@@ -554,7 +555,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         // ------------------------------------------------------------------
         // Handles obstacle set messages from O
         // ------------------------------------------------------------------
-        if (FD_ISSET(fd_obs, &rfds)) {
+        if (fd_obs >= 0 && FD_ISSET(fd_obs, &rfds)) {     // so that we never call FD_ISSET on a disabled FD
             ObstacleSetMsg msg;
             int n = read(fd_obs, &msg, sizeof(msg));
             if (n <= 0) {
@@ -620,7 +621,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         // Handles target-set messages from T
         // ------------------------------------------------------------------
 
-        if (FD_ISSET(fd_tgt, &rfds)) {
+        if (fd_tgt >= 0 && FD_ISSET(fd_tgt, &rfds)) {
             TargetSetMsg msg;
             int n = read(fd_tgt, &msg, sizeof(msg));
             if (n <= 0) {
