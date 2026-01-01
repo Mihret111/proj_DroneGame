@@ -1,37 +1,14 @@
-/**
- * @brief Entry point and Master Process orchestrator.
- * 
- * @details
- * This file is responsible for booting the entire system architecture.
- * 
- * **Process Topology**:
- * The Master process spawns 5 children and then *transforms* into the Server (B).
- * 
- *       [Keyboard I] ---> pipe_I_to_B ---> [Server B]
- *       [Server B] <--- pipe_D_to_B <--- [Dynamics D]
- *       [Server B] ---> pipe_D_to_B ---> [Dynamics D]
- *       [Server B] <--- pipe_T_to_B <--- [Targets T]
- *       [Server B] <--- pipe_O_to_B <--- [Obstacles O]
- * 
- *       [Watchdog W] <--- (Signals) ------ [All Processes]
- * 
- * **Key Responsibility**:
- * 1. Load configuration (params.txt).
- * 2. Create all communication pipes.
- * 3. Fork all child processes (I, D, O, T, W).
- * 4. Close unused pipe ends in each process (critical for EOF detection).
- * 5. Parent process becomes the Server (B).
- */
+// main.c  (FIXED STRUCTURE FOR ASSIGNMENT 3 MODES)
 
 #include "headers/params.h"
 #include "headers/util.h"
 #include "headers/keyboard.h"
 #include "headers/dynamics.h"
 #include "headers/server.h"
+#include "headers/runmode.h"
 
 #include "headers/obstacles.h"
 #include "headers/targets.h"
-
 #include "headers/watchdog.h"
 
 #include <unistd.h>
@@ -39,165 +16,242 @@
 #include <sys/types.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>   // memset, strcpy
 
+// ------------------------------
+// Step 0: Prompt user BEFORE ncurses
+// ------------------------------
+static void prompt_run_config(RunConfig *cfg) {
+    memset(cfg, 0, sizeof(*cfg));
+    cfg->mode = MODE_STANDALONE;
+    cfg->port = 5001;
+    strcpy(cfg->server_ip, "127.0.0.1");
+
+    printf("\n=== ARP Assignment 3: Select Mode ===\n");
+    printf("1) standalone\n");
+    printf("2) server\n");
+    printf("3) client\n");
+    char input[32];
+    while (1) {
+        printf("Select [1, 2 or 3] (q to quit): ");
+        fflush(stdout);
+        
+        if (scanf("%31s", input) != 1) exit(0); // Handle EOF
+
+        if (strcmp(input, "1") == 0) {
+            cfg->mode = MODE_STANDALONE;
+            break;
+        } else if (strcmp(input, "2") == 0) {
+            cfg->mode = MODE_SERVER;
+            break;
+        } else if (strcmp(input, "3") == 0) {
+            cfg->mode = MODE_CLIENT;
+            break;
+        } else if (strcmp(input, "q") == 0) {
+            exit(0);
+        } else {
+            printf("Invalid choice. ");
+        }
+    }
+
+    if (cfg->mode != MODE_STANDALONE) {
+        printf("Port [default 5001]: ");
+        fflush(stdout);
+        int p;
+        if (scanf("%d", &p) == 1 && p > 0 && p < 65536) cfg->port = p;
+
+        if (cfg->mode == MODE_CLIENT) {
+            printf("Server IP (e.g. 192.168.1.10): ");  
+            fflush(stdout);
+            scanf("%63s", cfg->server_ip);
+        }
+    }
+
+    printf("Selected mode: %s\n",
+           (cfg->mode==MODE_STANDALONE)?"standalone":
+           (cfg->mode==MODE_SERVER)?"server":"client");
+    printf("====================================\n\n");
+    fflush(stdout);
+}
 
 int main(void) {
+    // ------------------------------
+    // Step 0: choose mode
+    // ------------------------------
+    RunConfig cfg;
+    prompt_run_config(&cfg);
+
     // Ensures logs/ directory exists
     ensure_logs_dir();
 
-    // 1) Loads parameters BEFORE forking so children inherit the struct.
+    // ------------------------------
+    // Step 1: Load params 
+    // ------------------------------
     SimParams params;
     init_default_params(&params);
     load_params_from_file("params.txt", &params);
 
-    // 2) Creates pipes:
-    //    - I -> B
-    //    - B -> D
-    //    - D -> B
-    int pipe_I_to_B[2];
-    int pipe_B_to_D[2];
-    int pipe_D_to_B[2];
-    // Creates pipes from obs and targets
-    //    - O -> B
-    //    - T -> B
-    int pipe_O_to_B[2];
-    int pipe_T_to_B[2];
-
-    // One-time configuration pipe: master -> watchdog
-    int pipe_CFG_to_W[2];
+    // ------------------------------
+    // Step 2: Create the ALWAYS-needed pipes (I<->B<->D)
+    // ------------------------------
+    int pipe_I_to_B[2]; // I writes, B reads
+    int pipe_B_to_D[2]; // B writes, D reads
+    int pipe_D_to_B[2]; // D writes, B reads
 
     if (pipe(pipe_I_to_B) == -1) die("pipe I->B");
     if (pipe(pipe_B_to_D) == -1) die("pipe B->D");
     if (pipe(pipe_D_to_B) == -1) die("pipe D->B");
-    //
-    if (pipe(pipe_O_to_B) == -1) die("pipe O->B");
-    if (pipe(pipe_T_to_B) == -1) die("pipe T->B");
 
-    if (pipe(pipe_CFG_to_W) == -1) die("pipe CFG->W");
-    
-    // 3) Forks Keyboard process (I)
+    // ------------------------------
+    // Step 3: Fork Keyboard process (I)
+    // ------------------------------
     pid_t pid_I = fork();
     if (pid_I == -1) die("fork I");
 
     if (pid_I == 0) {
-        // CHILD: I
-        close(pipe_I_to_B[0]);   // I only writes to I->B[1]
-
-        // Closes all unused ends: B, D, O, T, CFG pipes
+        // CHILD I: uses only pipe_I_to_B[1]
+        close(pipe_I_to_B[0]);          // close read end
         close(pipe_B_to_D[0]); close(pipe_B_to_D[1]);
         close(pipe_D_to_B[0]); close(pipe_D_to_B[1]);
-        close(pipe_O_to_B[0]); close(pipe_O_to_B[1]);
-        close(pipe_T_to_B[0]); close(pipe_T_to_B[1]);
-        close(pipe_CFG_to_W[0]); close(pipe_CFG_to_W[1]);
 
         run_keyboard_process(pipe_I_to_B[1]);
+        // never returns
     }
 
-    // 4) Forks Dynamics process (D)
+    // ------------------------------
+    // Step 4: Fork Dynamics process (D)
+    // ------------------------------
     pid_t pid_D = fork();
     if (pid_D == -1) die("fork D");
 
     if (pid_D == 0) {
-        // CHILD: D
-        close(pipe_B_to_D[1]);   // D reads from B->D[0]
-        close(pipe_D_to_B[0]);   // D writes to D->B[1]
-
-        // Closes all unused ends: I, O, T, CFG pipes
+        // CHILD D: reads from pipe_B_to_D[0], writes to pipe_D_to_B[1]
+        close(pipe_B_to_D[1]);      // close write end
+        close(pipe_D_to_B[0]);      // close read end
         close(pipe_I_to_B[0]); close(pipe_I_to_B[1]);
-        close(pipe_O_to_B[0]); close(pipe_O_to_B[1]);
-        close(pipe_T_to_B[0]); close(pipe_T_to_B[1]);
-        close(pipe_CFG_to_W[0]); close(pipe_CFG_to_W[1]);
 
         run_dynamics_process(pipe_B_to_D[0], pipe_D_to_B[1], params);
+        // never returns
     }
 
-    // 5) Forks Obstacles process (O)
-    pid_t pid_O = fork();
-    if (pid_O == -1) die("fork O");
+    // ------------------------------
+    // Step 5: Extras (O, T, W) ONLY in standalone mode
+    // ------------------------------
+    int   fd_obs_read = -1;
+    int   fd_tgt_read = -1;
+    pid_t pid_W       = -1;
 
-    if (pid_O == 0) {
-        // CHILD: Obstacle generator
-        close(pipe_O_to_B[0]);   // O writes to O->B[1]
+    pid_t pid_O = -1;
+    pid_t pid_T = -1;
 
-        // Closes all unused endsq: I, D, T, CFG pipes
-        close(pipe_I_to_B[0]); close(pipe_I_to_B[1]);
-        close(pipe_B_to_D[0]); close(pipe_B_to_D[1]);
-        close(pipe_D_to_B[0]); close(pipe_D_to_B[1]);
-        close(pipe_T_to_B[0]); close(pipe_T_to_B[1]);
-        close(pipe_CFG_to_W[0]); close(pipe_CFG_to_W[1]);
-        run_obstacle_process(pipe_O_to_B[1], params);
+    int pipe_O_to_B[2] = {-1, -1};
+    int pipe_T_to_B[2] = {-1, -1};
+    int pipe_CFG_to_W[2] = {-1, -1};
+
+    if (cfg.mode == MODE_STANDALONE) {
+        // Create pipes O->B and T->B
+        if (pipe(pipe_O_to_B) == -1) die("pipe O->B");
+        if (pipe(pipe_T_to_B) == -1) die("pipe T->B");
+
+        // Create config pipe master->W
+        if (pipe(pipe_CFG_to_W) == -1) die("pipe CFG->W");
+
+        // ---- fork O
+        pid_O = fork();
+        if (pid_O == -1) die("fork O");
+
+        if (pid_O == 0) {
+            close(pipe_O_to_B[0]);              // O writes only
+            close(pipe_T_to_B[0]); close(pipe_T_to_B[1]);
+            close(pipe_CFG_to_W[0]); close(pipe_CFG_to_W[1]);
+
+            close(pipe_I_to_B[0]); close(pipe_I_to_B[1]);
+            close(pipe_B_to_D[0]); close(pipe_B_to_D[1]);
+            close(pipe_D_to_B[0]); close(pipe_D_to_B[1]);
+
+            run_obstacle_process(pipe_O_to_B[1], params);
+        }
+
+        // ---- fork T
+        pid_T = fork();
+        if (pid_T == -1) die("fork T");
+
+        if (pid_T == 0) {
+            close(pipe_T_to_B[0]);              // T writes only
+            close(pipe_O_to_B[0]); close(pipe_O_to_B[1]);
+            close(pipe_CFG_to_W[0]); close(pipe_CFG_to_W[1]);
+
+            close(pipe_I_to_B[0]); close(pipe_I_to_B[1]);
+            close(pipe_B_to_D[0]); close(pipe_B_to_D[1]);
+            close(pipe_D_to_B[0]); close(pipe_D_to_B[1]);
+
+            run_target_process(pipe_T_to_B[1], params);
+        }
+
+        // ---- fork W
+        pid_W = fork();
+        if (pid_W == -1) die("fork W");
+
+        if (pid_W == 0) {
+            // W reads config from pipe_CFG_to_W[0]
+            close(pipe_CFG_to_W[1]);
+
+            // Close everything else
+            close(pipe_I_to_B[0]); close(pipe_I_to_B[1]);
+            close(pipe_B_to_D[0]); close(pipe_B_to_D[1]);
+            close(pipe_D_to_B[0]); close(pipe_D_to_B[1]);
+            close(pipe_O_to_B[0]); close(pipe_O_to_B[1]);
+            close(pipe_T_to_B[0]); close(pipe_T_to_B[1]);
+
+            run_watchdog_process(pipe_CFG_to_W[0], params.wd_warn_sec, params.wd_kill_sec);
+        }
+
+        // Parent ( B) reads from O and T
+        close(pipe_O_to_B[1]);   // close write end
+        close(pipe_T_to_B[1]);   // close write end
+        fd_obs_read = pipe_O_to_B[0];
+        fd_tgt_read = pipe_T_to_B[0];
+
+        // Send PIDs to watchdog (master writes one-time config)
+        close(pipe_CFG_to_W[0]); // parent writes
+        WatchPids wp;
+        wp.pid_B = getpid(); // master will become B
+        wp.pid_I = pid_I;
+        wp.pid_D = pid_D;
+        wp.pid_O = pid_O;
+        wp.pid_T = pid_T;
+
+        if (write(pipe_CFG_to_W[1], &wp, sizeof(wp)) != (int)sizeof(wp)) {
+            perror("[MAIN/B] write WatchPids to W failed");
+        }
+        close(pipe_CFG_to_W[1]);
     }
 
-    // 6) Forks Targets process (T)
-    pid_t pid_T = fork();
-    if (pid_T == -1) die("fork T");
+    // ------------------------------
+    // Step 6: Parent becomes Server (B)
+    // ------------------------------
 
-    if (pid_T == 0) {
-        // CHILD: Target generator
-        close(pipe_T_to_B[0]);   // T writes to T->B[1]
-        
-        // Closes all unused ends: I, D, O, CFG pipes
-        close(pipe_I_to_B[0]); close(pipe_I_to_B[1]);
-        close(pipe_B_to_D[0]); close(pipe_B_to_D[1]);
-        close(pipe_D_to_B[0]); close(pipe_D_to_B[1]);
-        close(pipe_O_to_B[0]); close(pipe_O_to_B[1]);
-        close(pipe_CFG_to_W[0]); close(pipe_CFG_to_W[1]);
-        run_target_process(pipe_T_to_B[1], params);
-    }
+    // Close ends B doesn't use
+    close(pipe_I_to_B[1]);   // B reads from I
+    close(pipe_B_to_D[0]);   // B writes to D
+    close(pipe_D_to_B[1]);   // B reads from D
 
-    // 7) Fork Watchdog (W) — signal based
-    pid_t pid_W = fork();
-    if (pid_W == -1) die("fork W");
-
-    if (pid_W == 0) {
-        // CHILD: W
-        close(pipe_CFG_to_W[1]);    // W reads config from pipe_CFG_to_W[0]
-
-        // Close all other pipes (W doesn't use them)
-        close(pipe_I_to_B[0]); close(pipe_I_to_B[1]);
-        close(pipe_B_to_D[0]); close(pipe_B_to_D[1]);
-        close(pipe_D_to_B[0]); close(pipe_D_to_B[1]);
-        close(pipe_O_to_B[0]); close(pipe_O_to_B[1]);
-        close(pipe_T_to_B[0]); close(pipe_T_to_B[1]);
-
-        // warn after configured sec, kill after configured sec
-        run_watchdog_process(pipe_CFG_to_W[0], params.wd_warn_sec, params.wd_kill_sec);
-    }
-
-    // 8) PARENT: Becomes Server B
-    close(pipe_I_to_B[1]);  // B reads from I->B[0]
-    close(pipe_B_to_D[0]);  // B writes to B->D[1]  // Close read end where B only writes
-    close(pipe_D_to_B[1]);  // B reads from D->B[0]
-
-    close(pipe_O_to_B[1]);  // B reads from O->B[0]
-    close(pipe_T_to_B[1]);  // B reads from T->B[0]
-
-    // Send PIDs to watchdog (one-time config)
-    close(pipe_CFG_to_W[0]); // parent writes
-    WatchPids wp;
-    wp.pid_B = getpid(); // B is the master process itself
-    wp.pid_I = pid_I;
-    wp.pid_D = pid_D;
-    wp.pid_O = pid_O;
-    wp.pid_T = pid_T;
-
-    if (write(pipe_CFG_to_W[1], &wp, sizeof(wp)) != (int)sizeof(wp)) {
-        perror("[MAIN/B] write WatchPids to W failed");
-    }
-    close(pipe_CFG_to_W[1]);
-
-
+    // ------------------------------
+    // Step 7: Run B (server/client/standalone)
+    // In network mode, B will do handshake before ncurses
+    // ------------------------------
     run_server_process(pipe_I_to_B[0],
-                        pipe_B_to_D[1],
-                        pipe_D_to_B[0],
-                        pipe_O_to_B[0],
-                        pipe_T_to_B[0],
-                        pid_W,params);
+                       pipe_B_to_D[1],
+                       pipe_D_to_B[0],
+                       fd_obs_read,
+                       fd_tgt_read,
+                       pid_W,
+                       params,
+                       cfg);
 
-    // 9) Waits for children to avoid zombies (good practice)
-    // Forked 5 children: I, D, O, T, W
-    while (wait(NULL) > 0) {
-        // loop until all children are reaped
-    }
+    // ------------------------------
+    // Step 8: Reap children 
+    // ------------------------------
+    while (wait(NULL) > 0) {}
     return 0;
 }

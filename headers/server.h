@@ -7,6 +7,7 @@
 
 #include <sys/types.h>   // for pid_t
 #include "params.h"
+#include "runmode.h"
 
 // Runs the server process:
 //   - fd_kb     : read-end of pipe I->B
@@ -19,5 +20,5 @@
 void run_server_process(int fd_kb, int fd_to_d, int fd_from_d,
                         int fd_obs, int fd_tgt,
                         pid_t pid_W,
-                        SimParams params);
+                        SimParams params, RunConfig cfg);
 #endif // SERVER_H

@@ -9,6 +9,11 @@
 // ======================================================================
 
 #define _POSIX_C_SOURCE 200809L
+#include <headers/runmode.h>
+#include <headers/net.h>
+#include <sys/ioctl.h>
+#include <termios.h>
+
 #include <signal.h>
 #include <string.h>
 #include <sys/select.h>   // for fd_set, FD_ZERO, FD_SET, select()
@@ -107,7 +112,7 @@ static char watchdog_banner_msg[] = "WATCHDOG WARNING, system may be unstable";
  * @param pid_W      PID of the Watchdog process (for sending heartbeat signals).
  * @param params     Simulation parameters.
  */
-void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int fd_tgt, pid_t pid_W, SimParams params) 
+void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int fd_tgt, pid_t pid_W, SimParams params, RunConfig cfg) 
 {
     // --- Opens logfile ---
     FILE *logfile = open_process_log("server", "B");
