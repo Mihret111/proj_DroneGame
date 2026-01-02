@@ -24,8 +24,8 @@
 static void prompt_run_config(RunConfig *cfg) {
     memset(cfg, 0, sizeof(*cfg));
     cfg->mode = MODE_STANDALONE;
-    cfg->port = 5001;
-    strcpy(cfg->server_ip, "127.0.0.1");
+    cfg->port = 5001;                         // default port
+    strcpy(cfg->server_ip, "127.0.0.1");     // default server IP
 
     printf("\n=== Select Mode of Operation ===\n");
     printf("1) standalone\n");

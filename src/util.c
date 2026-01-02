@@ -229,7 +229,11 @@ void compute_repulsive_P(const DroneStateMsg *s,
                          double              *Px,
                          double              *Py)
 {
-    const double eps = 1e-3;
+    const double eps_wall = 1e-3;
+    const double eps_obst = 1e-3;
+
+    const double FMAX = 50.0;   // tune: 20–200 depending on your force_step
+
     *Px = 0.0;
     *Py = 0.0;
 
@@ -246,41 +250,45 @@ void compute_repulsive_P(const DroneStateMsg *s,
             // Right wall at x = +world_half
             double d_right = world_half - s->x;
             if (d_right < wall_clearance) {
-                if (d_right < eps) d_right = eps;
+                if (d_right < eps_wall) d_right = eps_wall;
                 double mag = wall_gain * (1.0/d_right - 1.0/wall_clearance);
                 if (mag < 0.0) mag = 0.0;
                 // Pushes left
                 *Px -= mag; // py=0 here 
+                if (mag > FMAX) mag = FMAX;
             }
 
             // Left wall at x = -world_half
             double d_left = world_half + s->x;
             if (d_left < wall_clearance) {
-                if (d_left < eps) d_left = eps;
+                if (d_left < eps_wall) d_left = eps_wall;
                 double mag = wall_gain * (1.0/d_left - 1.0/wall_clearance);
                 if (mag < 0.0) mag = 0.0;
                 // Pushes right
                 *Px += mag;
+                if (mag > FMAX) mag = FMAX;
             }
 
             // Top wall at y = +world_half
             double d_top = world_half - s->y;
             if (d_top < wall_clearance) {
-                if (d_top < eps) d_top = eps;
+                if (d_top < eps_wall) d_top = eps_wall;
                 double mag = wall_gain * (1.0/d_top - 1.0/wall_clearance);
                 if (mag < 0.0) mag = 0.0;
                 // Pushes down
                 *Py -= mag;
+                if (mag > FMAX) mag = FMAX;
             }
 
             // Bottom wall at y = -world_half
             double d_bottom = world_half + s->y;
             if (d_bottom < wall_clearance) {
-                if (d_bottom < eps) d_bottom = eps;
+                if (d_bottom < eps_wall) d_bottom = eps_wall;
                 double mag = wall_gain * (1.0/d_bottom - 1.0/wall_clearance);
                 if (mag < 0.0) mag = 0.0;
                 // Pushes up
                 *Py += mag;
+                if (mag > FMAX) mag = FMAX;
             }
         }
     }
@@ -305,8 +313,8 @@ void compute_repulsive_P(const DroneStateMsg *s,
             double dy  = s->y - oy;
             double rho = sqrt(dx*dx + dy*dy);
 
-            if (rho < eps) {
-                rho = eps;
+            if (rho < eps_obst) {
+                rho = eps_obst;
             }
 
             if (rho < obs_clearance) {
@@ -318,6 +326,7 @@ void compute_repulsive_P(const DroneStateMsg *s,
 
                 *Px += mag * ux;
                 *Py += mag * uy;
+                if (mag > FMAX) mag = FMAX;
             }
         }
     }

@@ -11,6 +11,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <headers/runmode.h>
 #include <headers/net.h>
+#include <headers/protocol.h>
 #include <sys/ioctl.h>
 #include <termios.h>
 
@@ -138,6 +139,22 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
     int peer_W = -1;     // remote screen width  (for scaling later)
     int peer_H = -1;     // remote screen height
     
+    //---------------- As seen by server ----------------
+    // Remote obstacle position received from client (server interprets as one obstacle)
+    // static int remote_obst_valid = 0;
+    static double remote_obst_x = 0.0;
+    static double remote_obst_y = 0.0;
+
+    // Pick one obstacle slot to represent the remote obstacle in server mode
+    // In server/client mode, O generator is OFF, thus we reuse slot 0
+    #define REMOTE_OBST_IDX 0
+
+    //----------------- As seen by client ----------------
+    // Server drone position as seen by client
+    static int remote_drone_valid = 0;
+    static double remote_drone_x = 0.0;
+    static double remote_drone_y = 0.0;
+
     // ================= Network handshake (BEFORE ncurses) =================
     if (cfg.mode == MODE_SERVER) {
         // SERVER MODE: We wait for a connection from a Client
@@ -362,7 +379,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             break; // exit from server loop
         }
 
-        // Queries current terminal size (for resizing).
+        // Queries current terminal size (for resizing)
         getmaxyx(stdscr, max_y, max_x);
 
         // Plans layout:
@@ -430,7 +447,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
 
             sel = select(maxfd, &rfds, NULL, NULL, &tv);
 
-            if (sel == 0) {
+            if (sel == 0) {     // no pipes ready
                 if (wd_warning_active && !paused) {
                     wd_blink_ticks++;
 
@@ -440,12 +457,10 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                         wd_blink_phase = !wd_blink_phase;
                     }
                 }
+                break;     // break so we still draw the UI this frame
+            }
 
-
-
-                }
-
-            if (sel == -1) {
+            if (sel == -1) {     // select failed
                 if (errno == EINTR) {
                     // Retries if interrupted by signal (like resize)
                     continue;
@@ -455,8 +470,10 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                     die("[B] select failed");
                 }
             }
-            break; // sel >= 0, we have an event
+            break; 
         }
+
+        // sel >= 0, we have an event
 
         // ------------------------------------------------------------------
         // Handles keyboard input from I (if available).
@@ -476,6 +493,20 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             if (km.key == 'q') {
                 fprintf(logfile, "QUIT requested by 'q'\n");
                 fflush(logfile);
+
+                // =================== SERVER QUIT HANDSHAKE ===================
+                if (cfg.mode == MODE_SERVER && net_fd >= 0) {
+                    fprintf(logfile, "[B] NET: sending quit 'q' to client...\n");
+                    fflush(logfile);
+
+                    if (proto_server_send_quit(net_fd) < 0) {
+                        fprintf(logfile, "[B] NET: quit handshake failed\n");
+                        fflush(logfile);
+                    }
+                }
+                // =============================================================
+
+
                 break;
             }
             // ------------------------------------------------------------------
@@ -609,8 +640,6 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                 continue;
             }
 
-
-
             // Updates current state
             cur_state = s;
 
@@ -677,6 +706,83 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                     wd_blink_phase = !wd_blink_phase; // toggle
                 }
             }
+
+            // =================== SERVER PROTOCOL STEP ===================
+            if (cfg.mode == MODE_SERVER && net_fd >= 0 && !paused) {
+                
+                // 1) Send drone position to client, wait "dok"
+                if (proto_server_send_drone(net_fd, cur_state.x, cur_state.y) < 0) {
+                    fprintf(logfile, "[B] NET: proto_server_send_drone failed -> closing\n");
+                    fflush(logfile);
+                    // Treat as disconnect -> quit loop 
+                    break;
+                }
+
+                // 2) Request obstacle position from client, then ack with "pok"
+                double ox, oy;
+                if (proto_server_request_obstacle(net_fd, &ox, &oy) < 0) {
+                    fprintf(logfile, "[B] NET: proto_server_request_obstacle failed -> closing\n");
+                    fflush(logfile);
+                    break;
+                }
+
+                // Store for use in repulsion
+                remote_obst_x = ox;
+                remote_obst_y = oy;
+                // remote_obst_valid = 1;
+
+                // 3) Inject this as one active obstacle (slot 0)
+                // NOTE: adjust field names if your Obstacle struct differs.
+                g_obstacles[REMOTE_OBST_IDX].active = 0;
+                g_obstacles[REMOTE_OBST_IDX].x = remote_obst_x;
+                g_obstacles[REMOTE_OBST_IDX].y = remote_obst_y;
+            }
+            // ========================================================================
+
+            // =================== CLIENT PROTOCOL STEP ===================
+            if (cfg.mode == MODE_CLIENT && net_fd >= 0 && !paused) {
+
+                char tag[64];
+                if (proto_recv_tag(net_fd, tag, sizeof(tag)) < 0) {
+                    fprintf(logfile, "[B] NET: recv tag failed -> server disconnected?\n");
+                    fflush(logfile);
+                    break; // exit main loop
+                }
+
+                if (strcmp(tag, "q") == 0) {
+                    fprintf(logfile, "[B] NET: received quit 'q' -> replying qok and exiting\n");
+                    fflush(logfile);
+                    proto_client_ack_quit(net_fd);
+                    break;
+                }
+                else if (strcmp(tag, "drone") == 0) {
+                    double sx, sy;
+                    if (proto_client_recv_drone_and_ack(net_fd, &sx, &sy) < 0) {
+                        fprintf(logfile, "[B] NET: recv drone failed\n");
+                        fflush(logfile);
+                        break;
+                    }
+                    remote_drone_x = sx;
+                    remote_drone_y = sy;
+                    remote_drone_valid = 1;
+                }
+                else if (strcmp(tag, "obst") == 0) {
+                    // Server is requesting an obstacle position. We send OUR drone position.
+                    if (proto_client_send_obstacle_and_wait_ack(net_fd, cur_state.x, cur_state.y) < 0) {
+                        fprintf(logfile, "[B] NET: send obstacle failed\n");
+                        fflush(logfile);
+                        break;
+                    }
+                }
+                else {
+                    // Unknown tag: protocol violation — log and break
+                    fprintf(logfile, "[B] NET: unknown tag '%s' -> protocol error\n", tag);
+                    fflush(logfile);
+                    break;
+                }
+            }
+        
+        // ========================================================================
 
 
             // Then, sends updated total force (evenif user doesn't send cmd) (user + obstacles)
@@ -901,6 +1007,26 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
 
         mvaddch(sy, sx, '+'); // Draws drone
 
+        // Draw remote (server) drone on client as 'X' using same world->screen mapping
+        if (cfg.mode == MODE_CLIENT && remote_drone_valid) {
+
+            int sx = (int)(remote_drone_x * scale_x) + main_width / 2 + 1;
+            int sy = (int)(-remote_drone_y * scale_y) + world_top + world_height / 2;
+
+            // clamp like you do for obstacles
+            if (sx < 1) sx = 1;
+            if (sx > main_width) sx = main_width;
+            if (sy < world_top) sy = world_top;
+            if (sy > world_bottom) sy = world_bottom;
+
+            // color it (use defined pair)
+            // attron(COLOR_PAIR(2));q
+            mvaddch(sy, sx, 'x');
+            // attroff(COLOR_PAIR(2));
+        }
+
+
+
         // Draws active obstacles as 'o' in the drone world
         for (int k = 0; k < NUM_OBSTACLES; ++k) {
             if (!g_obstacles[k].active) continue;  // Skips inactive 
@@ -968,6 +1094,9 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
     }
 
     // Final cleanup
+    if (net_fd >= 0) close(net_fd);
+    if (listen_fd >= 0) close(listen_fd);    // also closed earlier after accept()
+    
     if (logfile) {
         fprintf(logfile, "[B] Exiting.\n");
         fclose(logfile);

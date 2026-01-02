@@ -180,3 +180,79 @@ int net_recv_line(int fd, char *buf, size_t maxlen) {
         return -1; // Fatal error.
     }
 }
+
+
+#include <sys/time.h>   // add at top of net.c (for timeout helper)
+#include <stdlib.h>
+
+// --- Optional helper: set recv timeout in ms ---
+int net_set_rcv_timeout_ms(int fd, int ms) {
+    struct timeval tv;
+    tv.tv_sec  = ms / 1000;
+    tv.tv_usec = (ms % 1000) * 1000;
+    return setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+}
+//****************************************************************/
+// ---------------- buffered line receive ----------------
+// This preserves partial data across calls (critical for timeouts)
+int net_recv_line(int fd, char *out, size_t maxlen) {
+    if (!out || maxlen < 2) { errno = EINVAL; return -1; }
+
+    // One slot is enough for this assignment (one net fd at a time).
+    // If you want multi-fd later, we can extend this to an fd->buffer map.
+    static int    s_fd = -1;
+    static char   buf[4096];
+    static size_t len = 0;
+
+    if (s_fd != fd) {
+        s_fd = fd;
+        len = 0;
+    }
+
+    for (;;) {
+        // 1) Do we already have a full line in the buffer?
+        for (size_t i = 0; i < len; i++) {
+            if (buf[i] == '\n') {
+                size_t line_len = i; // excluding '\n'
+                if (line_len + 1 > maxlen) { errno = EMSGSIZE; return -1; }
+
+                memcpy(out, buf, line_len);
+                out[line_len] = '\0';
+
+                // Remove consumed line + '\n' from buffer
+                size_t remaining = len - (i + 1);
+                memmove(buf, buf + i + 1, remaining);
+                len = remaining;
+
+                return 0;
+            }
+        }
+
+        // 2) Need more data. Read into buffer tail.
+        if (len >= sizeof(buf)) {
+            errno = EMSGSIZE; // line too long
+            return -1;
+        }
+
+        ssize_t r = recv(fd, buf + len, sizeof(buf) - len, 0);
+        if (r > 0) {
+            len += (size_t)r;
+            continue;
+        }
+
+        if (r == 0) {
+            errno = ECONNRESET; // peer closed
+            return -1;
+        }
+
+        // r < 0
+        if (errno == EINTR) continue;
+
+        // Timeout / no data available (with SO_RCVTIMEO set)
+        // IMPORTANT: we return -1 but KEEP partial bytes in 'buf'
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return -1;
+
+        return -1;
+    }
+}
+
