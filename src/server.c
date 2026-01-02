@@ -88,6 +88,170 @@ static void get_term_size_pre_ncurses(int *W, int *H) {
     }
 }
 
+// Server protocol state
+typedef enum {
+    SP_SEND_DRONE_TAG = 0,
+    SP_SEND_DRONE_XY,
+    SP_WAIT_DOK,
+    SP_SEND_OBST_TAG,
+    SP_WAIT_OBST_XY,
+    SP_SEND_POK
+} ServerProtoPhase;
+
+static ServerProtoPhase sp_phase = SP_SEND_DRONE_TAG;
+static double sp_last_ox = 0.0, sp_last_oy = 0.0;
+
+//client protocol state
+typedef enum {
+    CP_WAIT_TAG = 0,
+    CP_WAIT_DRONE_XY,
+    CP_SEND_OBST_XY,
+    CP_WAIT_POK
+} ClientProtoPhase;
+
+static ClientProtoPhase cp_phase = CP_WAIT_TAG;
+static char cp_last_tag[64];
+
+
+
+static int server_proto_tick(int net_fd,
+                             double myx, double myy,
+                             int *have_obst, double *ox, double *oy)
+{
+    // Returns:
+    //  0 : progressed
+    //  1 : would block (timeout) -> not an error
+    // -1 : hard error (disconnect/protocol error)
+
+    char line[128];
+    *have_obst = 0;
+
+    switch (sp_phase) {
+
+    case SP_SEND_DRONE_TAG:
+        if (net_send_line(net_fd, "drone") < 0) return -1;
+        sp_phase = SP_SEND_DRONE_XY;
+        return 0;
+
+    case SP_SEND_DRONE_XY:
+        if (proto_send_xy(net_fd, myx, myy) < 0) return -1;
+        sp_phase = SP_WAIT_DOK;
+        return 0;
+
+    case SP_WAIT_DOK:
+        if (net_recv_line(net_fd, line, sizeof(line)) < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) return 1; // timeout: try later
+            return -1;
+        }
+        if (strcmp(line, "dok") != 0) return -1;
+        sp_phase = SP_SEND_OBST_TAG;
+        return 0;
+
+    case SP_SEND_OBST_TAG:
+        if (net_send_line(net_fd, "obst") < 0) return -1;
+        sp_phase = SP_WAIT_OBST_XY;
+        return 0;
+
+    case SP_WAIT_OBST_XY: {
+        double x, y;
+        if (proto_recv_xy(net_fd, &x, &y) < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) return 1;
+            return -1;
+        }
+        sp_last_ox = x; sp_last_oy = y;
+        sp_phase = SP_SEND_POK;
+        return 0;
+    }
+
+    case SP_SEND_POK:
+        if (net_send_line(net_fd, "pok") < 0) return -1;
+
+        *have_obst = 1;
+        *ox = sp_last_ox;
+        *oy = sp_last_oy;
+
+        sp_phase = SP_SEND_DRONE_TAG;
+        return 0;
+    }
+
+    return 0;
+}
+
+
+static int client_proto_tick(int net_fd,
+                             double myx, double myy,
+                             int *have_remote_drone,
+                             double *rx, double *ry,
+                             int *server_quit)
+{
+    // returns:
+    //  0 : progressed
+    //  1 : would block (timeout) -> NOT an error
+    // -1 : hard error (disconnect / protocol error)
+
+    *have_remote_drone = 0;
+    *server_quit = 0;
+
+    switch (cp_phase) {
+
+    case CP_WAIT_TAG:
+        if (net_recv_line(net_fd, cp_last_tag, sizeof(cp_last_tag)) < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) return 1;
+            return -1;
+        }
+
+        if (strcmp(cp_last_tag, "q") == 0) {
+            *server_quit = 1;
+            return 0;
+        }
+
+        if (strcmp(cp_last_tag, "drone") == 0) {
+            cp_phase = CP_WAIT_DRONE_XY;
+            return 0;
+        }
+
+        if (strcmp(cp_last_tag, "obst") == 0) {
+            cp_phase = CP_SEND_OBST_XY;
+            return 0;
+        }
+
+        // unknown tag
+        return -1;
+
+    case CP_WAIT_DRONE_XY:
+        if (proto_recv_xy(net_fd, rx, ry) < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) return 1;
+            return -1;
+        }
+
+        if (net_send_line(net_fd, "dok") < 0) return -1;
+
+        *have_remote_drone = 1;
+        cp_phase = CP_WAIT_TAG;
+        return 0;
+
+    case CP_SEND_OBST_XY:
+        if (proto_send_xy(net_fd, myx, myy) < 0) return -1;
+        cp_phase = CP_WAIT_POK;
+        return 0;
+
+    case CP_WAIT_POK: {
+        char line[64];
+        if (net_recv_line(net_fd, line, sizeof(line)) < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) return 1;
+            return -1;
+        }
+        if (strcmp(line, "pok") != 0) return -1;
+
+        cp_phase = CP_WAIT_TAG;
+        return 0;
+    }
+    }
+
+    return 0;
+}
+
+
 // ---------------- Watchdog signal flags (set by signal handlers) ----------------
 static volatile sig_atomic_t g_wd_warning_flag = 0; // set by SIGUSR2 handler
 static volatile sig_atomic_t g_wd_stop    = 0;  // set when SIGTERM arrives
@@ -139,6 +303,13 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
     int peer_W = -1;     // remote screen width  (for scaling later)
     int peer_H = -1;     // remote screen height
     
+    // Networking state variables
+    // typedef enum { NET_SEND_DRONE_TAG, NET_SEND_DRONE_XY, NET_WAIT_DOK,
+    //            NET_SEND_OBST_TAG, NET_WAIT_OBST_XY, NET_SEND_POK } NetPhase;
+
+    // static NetPhase phase = NET_SEND_DRONE_TAG;
+    // static double pending_ox = 0.0, pending_oy = 0.0;
+
     //---------------- As seen by server ----------------
     // Remote obstacle position received from client (server interprets as one obstacle)
     // static int remote_obst_valid = 0;
@@ -712,90 +883,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                 }
             }
 
-            // =================== SERVER PROTOCOL STEP ===================
-            if (cfg.mode == MODE_SERVER && net_fd >= 0 && !paused) {
-                
-                // 1) Send drone position to client, wait "dok"
-                int rc = proto_server_send_drone(net_fd, cur_state.x, cur_state.y);
-                if (rc < 0) {
-                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                        // client didn’t answer yet — skip networking this frame, keep rendering smooth
-                    } else {
-                        fprintf(logfile, "\n[B] NET: send_drone failed hard\n");
-                        break;
-                    }
-                }
-
-                // 2) Request obstacle position from client, then ack with "pok"
-                double ox, oy;
-                int ro = proto_server_request_obstacle(net_fd, &ox, &oy);
-                if (ro < 0) {
-                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                        // client didn’t answer yet — skip networking this frame, keep rendering smooth
-                    } else {
-                        fprintf(logfile, "\n[B] NET: request_obstacle failed hard\n");
-                        break;
-                    }
-                }
-
-                // Store for use in repulsion
-                remote_obst_x = ox;
-                remote_obst_y = oy;
-                // remote_obst_valid = 1;
-
-                // 3) Inject this as one active obstacle (slot 0)
-                // NOTE: adjust field names if your Obstacle struct differs.
-                g_obstacles[REMOTE_OBST_IDX].active = 1;
-                g_obstacles[REMOTE_OBST_IDX].x = remote_obst_x;
-                g_obstacles[REMOTE_OBST_IDX].y = remote_obst_y;
-            }
-            // ========================================================================
-
-            // =================== CLIENT PROTOCOL STEP ===================
-            if (cfg.mode == MODE_CLIENT && net_fd >= 0 && !paused) {
-
-                char tag[64];
-                if (proto_recv_tag(net_fd, tag, sizeof(tag)) < 0) {
-                    fprintf(logfile, "[B] NET: recv tag failed -> server disconnected?\n");
-                    fflush(logfile);
-                    break; // exit main loop
-                }
-
-                if (strcmp(tag, "q") == 0) {
-                    fprintf(logfile, "[B] NET: received quit 'q' -> replying qok and exiting\n");
-                    fflush(logfile);
-                    proto_client_ack_quit(net_fd);
-                    break;
-                }
-                else if (strcmp(tag, "drone") == 0) {
-                    double sx, sy;
-                    if (proto_client_recv_drone_and_ack(net_fd, &sx, &sy) < 0) {
-                        fprintf(logfile, "[B] NET: recv drone failed\n");
-                        fflush(logfile);
-                        break;
-                    }
-                    remote_drone_x = sx;
-                    remote_drone_y = sy;
-                    remote_drone_valid = 1;
-                }
-                else if (strcmp(tag, "obst") == 0) {
-                    // Server is requesting an obstacle position. We send OUR drone position.
-                    if (proto_client_send_obstacle_and_wait_ack(net_fd, cur_state.x, cur_state.y) < 0) {
-                        fprintf(logfile, "[B] NET: send obstacle failed\n");
-                        fflush(logfile);
-                        break;
-                    }
-                }
-                else {
-                    // Unknown tag: protocol violation — log and break
-                    fprintf(logfile, "[B] NET: unknown tag '%s' -> protocol error\n", tag);
-                    fflush(logfile);
-                    break;
-                }
-            }
-        
-        // ========================================================================
-
+            
 
             // Then, sends updated total force (evenif user doesn't send cmd) (user + obstacles)
             send_total_force_to_d(&cur_force,
@@ -945,6 +1033,74 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
     }
 
 }
+        // =================== ASSIGNMENT 3: NETWORK STEP (NON-BLOCKING) ===================
+        if (cfg.mode == MODE_SERVER && net_fd >= 0 && !paused) {
+
+            int have = 0;
+            double ox = 0.0, oy = 0.0;
+
+            // try a few micro-steps per frame (keeps it responsive even if net is behind)
+            for (int k = 0; k < 4; k++) {
+                int rc = server_proto_tick(net_fd, cur_state.x, cur_state.y, &have, &ox, &oy);
+                if (rc == 1) break;        // would block -> stop trying this frame
+                if (rc < 0) {              // hard error -> terminate networking
+                    fprintf(logfile, "[B] NET: server_proto_tick hard error -> disconnect\n");
+                    fflush(logfile);
+                    goto shutdown_and_exit; // or set a quit flag and break outer loop
+                }
+            }
+
+            if (have) {
+                // Inject client drone as a single obstacle (repulsion uses your existing obstacle loop)
+                g_obstacles[REMOTE_OBST_IDX].active = 1;
+                g_obstacles[REMOTE_OBST_IDX].x = ox;
+                g_obstacles[REMOTE_OBST_IDX].y = oy;
+            }
+        }
+        // ================================================================================
+
+        // Client mode net step can also live here (same idea: read tag, act)
+        // =================== ASSIGNMENT 3: CLIENT NETWORK STEP (NON-BLOCKING) ===================
+        if (cfg.mode == MODE_CLIENT && net_fd >= 0 && !paused) {
+
+            int have_remote = 0;
+            int server_quit = 0;
+            double sx = 0.0, sy = 0.0;
+
+            // advance protocol state machine a few micro-steps per frame
+            for (int k = 0; k < 4; k++) {
+                int rc = client_proto_tick(net_fd,
+                                        cur_state.x, cur_state.y,
+                                        &have_remote,
+                                        &sx, &sy,
+                                        &server_quit);
+
+                if (rc == 1) break;          // would block -> stop this frame
+                if (rc < 0) {
+                    fprintf(logfile, "[B] NET: client_proto_tick hard error -> disconnect\n");
+                    fflush(logfile);
+                    goto shutdown_and_exit;  // or set quit flag
+                }
+            }
+
+            if (server_quit) {
+                fprintf(logfile, "[B] NET: server requested quit\n");
+                fflush(logfile);
+                net_send_line(net_fd, "qok");
+                goto shutdown_and_exit;
+            }
+
+            if (have_remote) {
+                // store server drone position for rendering
+                remote_drone_x = sx;
+                remote_drone_y = sy;
+                remote_drone_valid = 1;
+            }
+        }
+        // =======================================================================================
+
+
+
         // ------------------------------------------------------------------
         // Draws UI (drone world + inspection panel)
         // ------------------------------------------------------------------
@@ -1104,21 +1260,25 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
 
         refresh();
     }
+ 
 
-    // Final cleanup
-    if (net_fd >= 0) close(net_fd);
-    if (listen_fd >= 0) close(listen_fd);    // also closed earlier after accept()
-    
-    if (logfile) {
-        fprintf(logfile, "[B] Exiting.\n");
-        fclose(logfile);
-    }
-    // Ends ncurses
-    endwin();
-    // Closes pipes
-    close(fd_kb);
-    close(fd_to_d);
-    close(fd_from_d);
-    exit(EXIT_SUCCESS); 
+    shutdown_and_exit:
+
+        // Final cleanup
+        if (net_fd >= 0) close(net_fd);
+        if (listen_fd >= 0) close(listen_fd);    // also closed earlier after accept()
+        
+        if (logfile) {
+            fprintf(logfile, "[B] Exiting.\n");
+            fclose(logfile);
+        }
+        // Ends ncurses
+        endwin();
+        // Closes pipes
+        close(fd_kb);
+        close(fd_to_d);
+        close(fd_from_d);
+        exit(EXIT_SUCCESS);
+
 }
 

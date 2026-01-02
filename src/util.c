@@ -229,8 +229,8 @@ void compute_repulsive_P(const DroneStateMsg *s,
                          double              *Px,
                          double              *Py)
 {
-    const double eps_wall = 1e-3;
-    const double eps_obst = 1e-3;
+    const double eps_wall = 1;
+    const double eps_obst = 1;
 
     const double FMAX = 50.0;   // tune: 20–200 depending on your force_step
 
