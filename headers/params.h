@@ -17,6 +17,7 @@ typedef struct {
     double wall_gain;      // Strength of repulsive force
     int   wd_warn_sec;    // Watchdog warning timeout (sec)
     int   wd_kill_sec;    // Watchdog kill timeout (sec)
+    int   req_timeout_ms; // Network receive timeout (ms)
 } SimParams;
 
 // Sets default values- just in case params.txt is not found

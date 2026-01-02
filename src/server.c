@@ -177,6 +177,9 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         // This blocks until a client connects
         net_fd = net_server_accept(listen_fd);
 
+        // Set receive timeout
+        net_set_rcv_timeout_ms(net_fd, params.req_timeout_ms);
+
         // 3. Stop listening after accepting
         // We only want 1 client for this assignment. Closing listen_fd prevents others from connecting
         if (listen_fd >= 0) {
@@ -223,6 +226,8 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
 
         // 1. Connect to the server IP/Port.
         net_fd = net_client_connect(cfg.server_ip, cfg.port);
+        
+        net_set_rcv_timeout_ms(net_fd, params.req_timeout_ms);
         if (net_fd < 0) {
             fprintf(logfile, "[B] ERROR: net_client_connect failed\n");
             fflush(logfile);
@@ -711,19 +716,26 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             if (cfg.mode == MODE_SERVER && net_fd >= 0 && !paused) {
                 
                 // 1) Send drone position to client, wait "dok"
-                if (proto_server_send_drone(net_fd, cur_state.x, cur_state.y) < 0) {
-                    fprintf(logfile, "[B] NET: proto_server_send_drone failed -> closing\n");
-                    fflush(logfile);
-                    // Treat as disconnect -> quit loop 
-                    break;
+                int rc = proto_server_send_drone(net_fd, cur_state.x, cur_state.y);
+                if (rc < 0) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                        // client didn’t answer yet — skip networking this frame, keep rendering smooth
+                    } else {
+                        fprintf(logfile, "\n[B] NET: send_drone failed hard\n");
+                        break;
+                    }
                 }
 
                 // 2) Request obstacle position from client, then ack with "pok"
                 double ox, oy;
-                if (proto_server_request_obstacle(net_fd, &ox, &oy) < 0) {
-                    fprintf(logfile, "[B] NET: proto_server_request_obstacle failed -> closing\n");
-                    fflush(logfile);
-                    break;
+                int ro = proto_server_request_obstacle(net_fd, &ox, &oy);
+                if (ro < 0) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                        // client didn’t answer yet — skip networking this frame, keep rendering smooth
+                    } else {
+                        fprintf(logfile, "\n[B] NET: request_obstacle failed hard\n");
+                        break;
+                    }
                 }
 
                 // Store for use in repulsion
@@ -733,7 +745,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
 
                 // 3) Inject this as one active obstacle (slot 0)
                 // NOTE: adjust field names if your Obstacle struct differs.
-                g_obstacles[REMOTE_OBST_IDX].active = 0;
+                g_obstacles[REMOTE_OBST_IDX].active = 1;
                 g_obstacles[REMOTE_OBST_IDX].x = remote_obst_x;
                 g_obstacles[REMOTE_OBST_IDX].y = remote_obst_y;
             }

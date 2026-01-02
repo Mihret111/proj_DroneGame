@@ -145,41 +145,41 @@ int net_sendf(int fd, const char *fmt, ...) {
 
 // reads until '\n' (newline is removed). returns 0 on success, -1 on error/EOF
 // Purpose: Reads from the socket byte-by-byte until a newline '\n' is found
-int net_recv_line(int fd, char *buf, size_t maxlen) {
-    if (!buf || maxlen < 2) { errno = EINVAL; return -1; } // Basic validity checks
+// int net_recv_line(int fd, char *buf, size_t maxlen) {
+//     if (!buf || maxlen < 2) { errno = EINVAL; return -1; } // Basic validity checks
 
-    size_t used = 0; // How many bytes we've read into 'buf'
-    while (1) {
-        char c;
-        ssize_t r = read(fd, &c, 1); // READ 1 BYTE at a time
-        // WHY: Reading 1 byte is inefficient but guarantees we don't accidentally 
-        // read into the *next* message waiting in the socket buffer
+//     size_t used = 0; // How many bytes we've read into 'buf'
+//     while (1) {
+//         char c;
+//         ssize_t r = read(fd, &c, 1); // READ 1 BYTE at a time
+//         // WHY: Reading 1 byte is inefficient but guarantees we don't accidentally 
+//         // read into the *next* message waiting in the socket buffer
 
-        if (r == 1) { // We got a byte
-            if (c == '\n') {
-                buf[used] = '\0'; // Replace newline with null-terminator for C string compatibility
-                return 0; // Success!
-            }
-            if (used + 1 >= maxlen) {
-                // Buffer is full and we haven't found a newline yet
-                errno = EMSGSIZE;
-                return -1;  
-            }
-            buf[used++] = c; // Store character and increment index
-            continue;
-        }
+//         if (r == 1) { // We got a byte
+//             if (c == '\n') {
+//                 buf[used] = '\0'; // Replace newline with null-terminator for C string compatibility
+//                 return 0; // Success!
+//             }
+//             if (used + 1 >= maxlen) {
+//                 // Buffer is full and we haven't found a newline yet
+//                 errno = EMSGSIZE;
+//                 return -1;  
+//             }
+//             buf[used++] = c; // Store character and increment index
+//             continue;
+//         }
 
-        if (r == 0) {
-            // EOF: The other side closed the connection
-            errno = ECONNRESET;
-            return -1;
-        }
+//         if (r == 0) {
+//             // EOF: The other side closed the connection
+//             errno = ECONNRESET;
+//             return -1;
+//         }
 
-        // r < 0
-        if (errno == EINTR) continue; // Retry if interrupted
-        return -1; // Fatal error.
-    }
-}
+//         // r < 0
+//         if (errno == EINTR) continue; // Retry if interrupted
+//         return -1; // Fatal error.
+//     }
+// }
 
 
 #include <sys/time.h>   // add at top of net.c (for timeout helper)
@@ -198,8 +198,7 @@ int net_set_rcv_timeout_ms(int fd, int ms) {
 int net_recv_line(int fd, char *out, size_t maxlen) {
     if (!out || maxlen < 2) { errno = EINVAL; return -1; }
 
-    // One slot is enough for this assignment (one net fd at a time).
-    // If you want multi-fd later, we can extend this to an fd->buffer map.
+    // One slot (one net fd at a time)
     static int    s_fd = -1;
     static char   buf[4096];
     static size_t len = 0;
@@ -249,7 +248,7 @@ int net_recv_line(int fd, char *out, size_t maxlen) {
         if (errno == EINTR) continue;
 
         // Timeout / no data available (with SO_RCVTIMEO set)
-        // IMPORTANT: we return -1 but KEEP partial bytes in 'buf'
+        // return -1 but KEEP partial bytes in 'buf'
         if (errno == EAGAIN || errno == EWOULDBLOCK) return -1;
 
         return -1;

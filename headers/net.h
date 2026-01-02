@@ -19,4 +19,6 @@ int net_recv_line(int fd, char *buf, size_t maxlen);
 // Send formatted text for convenience
 int net_sendf(int fd, const char *fmt, ...);
 
+int net_set_rcv_timeout_ms(int fd, int ms);
+
 #endif

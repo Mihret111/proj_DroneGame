@@ -53,6 +53,9 @@ void init_default_params(SimParams *p) {
     // Watchdog defaults
     p->wd_warn_sec    = 2;
     p->wd_kill_sec    = 10;
+    
+    // Network defaults
+    p->req_timeout_ms = 80; // 80ms default
 }
 
 // Loads parameters from a simple "key=value" file.
@@ -104,6 +107,7 @@ void load_params_from_file(const char *filename, SimParams *p) {
         else if (strcmp(key, "wall_gain")      == 0) p->wall_gain      = d;
         else if (strcmp(key, "wd_warn_sec")    == 0) p->wd_warn_sec    = (int)d;
         else if (strcmp(key, "wd_kill_sec")    == 0) p->wd_kill_sec    = (int)d;
+        else if (strcmp(key, "req_timeout_ms") == 0) p->req_timeout_ms = (int)d;
         else {
             fprintf(logfile, "[PARAMS] Unknown key '%s', ignoring.\n", key);
         }
