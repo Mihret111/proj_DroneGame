@@ -8,6 +8,8 @@
 #include <sys/types.h>   // for pid_t
 #include "params.h"
 #include "runmode.h"
+#include <sys/types.h>
+
 
 // Runs the server process:
 //   - fd_kb     : read-end of pipe I->B

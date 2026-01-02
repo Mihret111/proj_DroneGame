@@ -27,7 +27,7 @@ static void prompt_run_config(RunConfig *cfg) {
     cfg->port = 5001;
     strcpy(cfg->server_ip, "127.0.0.1");
 
-    printf("\n=== ARP Assignment 3: Select Mode ===\n");
+    printf("\n=== Select Mode of Operation ===\n");
     printf("1) standalone\n");
     printf("2) server\n");
     printf("3) client\n");
@@ -67,7 +67,7 @@ static void prompt_run_config(RunConfig *cfg) {
         }
     }
 
-    printf("Selected mode: %s\n",
+    printf("\nSelected mode: %s\n",
            (cfg->mode==MODE_STANDALONE)?"standalone":
            (cfg->mode==MODE_SERVER)?"server":"client");
     printf("====================================\n\n");

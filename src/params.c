@@ -5,6 +5,7 @@
 // ======================================================================
 
 #include "headers/params.h"
+#include "headers/util.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -58,15 +59,23 @@ void init_default_params(SimParams *p) {
 // Ignores unknown keys. Keeps defaults if file is missing.
 // ----------------------------------------------------------------------
 void load_params_from_file(const char *filename, SimParams *p) {
+    // Opens log file
+    FILE *logfile = open_process_log("server", "B");
+    if (!logfile) {
+        // endwin();
+        die("[B] cannot open logs/server.log");
+    }
+
+    // Opens params.txt
     FILE *fp = fopen(filename, "r");
     if (!fp) {
-        fprintf(stderr,
+        fprintf(logfile,
                 "[PARAMS] Could not open '%s'. Using default parameters.\n",
                 filename);
         return;
     }
 
-    fprintf(stderr, "[PARAMS] Loading parameters from '%s'...\n", filename);
+    fprintf(logfile, "[PARAMS] Loading parameters from '%s'...\n", filename);
 
     char line[256];
     while (fgets(line, sizeof(line), fp)) {
@@ -96,13 +105,13 @@ void load_params_from_file(const char *filename, SimParams *p) {
         else if (strcmp(key, "wd_warn_sec")    == 0) p->wd_warn_sec    = (int)d;
         else if (strcmp(key, "wd_kill_sec")    == 0) p->wd_kill_sec    = (int)d;
         else {
-            fprintf(stderr, "[PARAMS] Unknown key '%s', ignoring.\n", key);
+            fprintf(logfile, "[PARAMS] Unknown key '%s', ignoring.\n", key);
         }
     }
 
     fclose(fp);
 
-    fprintf(stderr,
+    fprintf(logfile,
             "[PARAMS] Loaded: mass=%.3f, visc=%.3f, dt=%.3f, force_step=%.3f, "
             "world_half=%.3f, wall_clearance=%.3f, wall_gain=%.3f\n",
             p->mass, p->visc, p->dt, p->force_step,

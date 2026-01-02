@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 
+// Define networking utilities
 // Server: create listening socket and accept 1 client
 int net_server_listen(int port);
 int net_server_accept(int listen_fd);

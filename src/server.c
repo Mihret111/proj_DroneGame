@@ -10,6 +10,9 @@
 
 #define _POSIX_C_SOURCE 200809L
 #include <headers/runmode.h>
+#include <headers/net.h>
+#include <sys/ioctl.h>
+#include <termios.h>
 
 #include <signal.h>
 #include <string.h>
@@ -70,7 +73,19 @@ static double hb_age_sec(void) {
     double last = (double)g_last_hb_ts.tv_sec + 1e-9 * (double)g_last_hb_ts.tv_nsec;
     return now - last;
 }
-
+// -------------------Networking utilities-------------------
+// gets terminal size before ncurses init
+static void get_term_size_pre_ncurses(int *W, int *H) {
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {  
+        *W = (int)ws.ws_col;
+        *H = (int)ws.ws_row;
+    } else {
+        // fallback default values if ioctl fails
+        *W = 120;
+        *H = 40;
+    }
+}
 
 // ---------------- Watchdog signal flags (set by signal handlers) ----------------
 static volatile sig_atomic_t g_wd_warning_flag = 0; // set by SIGUSR2 handler
@@ -117,7 +132,131 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         endwin();
         die("[B] cannot open logs/server.log");
     }
+    // -----------------------------Networking variables------------------------
+    int net_fd = -1;     // connection socket (socket fd if connected)
+    int listen_fd = -1;  // listening socket (server)
+    int peer_W = -1;     // remote screen width  (for scaling later)
+    int peer_H = -1;     // remote screen height
+    
+    // ================= Network handshake (BEFORE ncurses) =================
+    if (cfg.mode == MODE_SERVER) {
+        // SERVER MODE: We wait for a connection from a Client
+        
+        fprintf(logfile, "[B] MODE_SERVER: listen on port %d\n", cfg.port);
+        fflush(logfile);
 
+        // 1. Create and bind listening socket
+        listen_fd = net_server_listen(cfg.port);
+        if (listen_fd < 0) {
+            fprintf(logfile, "[B] ERROR: net_server_listen failed\n");
+            fflush(logfile);
+            exit(EXIT_FAILURE);
+        }
+
+        fprintf(logfile, "[B] Waiting for 1 client...\n");
+        fflush(logfile);
+
+        // 2. Accept exactly one client connection
+        // This blocks until a client connects
+        net_fd = net_server_accept(listen_fd);
+
+        // 3. Stop listening after accepting
+        // We only want 1 client for this assignment. Closing listen_fd prevents others from connecting
+        if (listen_fd >= 0) {
+            close(listen_fd);
+        }
+        listen_fd = -1;
+    
+        if (net_fd < 0) {
+            fprintf(logfile, "[B] ERROR: net_server_accept failed\n");
+            fflush(logfile);
+            exit(EXIT_FAILURE);
+        }
+
+        // --- HANDSHAKE PROTOCOL ---
+        // 1) Verify connection: Send "ok", expect "ook"
+        // This confirms the other side is indeed our client protocol
+        if (net_send_line(net_fd, "ok") < 0) die("[B] net_send_line(ok)");
+        
+        char line[256];
+        // Read response (expecting "ook")
+        if (net_recv_line(net_fd, line, sizeof(line)) < 0) die("[B] net_recv_line(ook)");
+        if (strcmp(line, "ook") != 0) die("[B] Expected 'ook'");
+
+        // 2) Synchronize Window Size: Send "size W H", expect "sok"
+        // The server dictates the required terminal size to the client
+        int W, H;
+        get_term_size_pre_ncurses(&W, &H); // Get own terminal size
+        
+        // Send our size to client so it can check if it fits
+        if (net_sendf(net_fd, "size %d %d", W, H) < 0) die("[B] net_sendf(size)");
+        
+        // Client confirms receipt with "sok"
+        if (net_recv_line(net_fd, line, sizeof(line)) < 0) die("[B] net_recv_line(sok)");
+        if (strcmp(line, "sok") != 0) die("[B] Expected 'sok'");
+
+        fprintf(logfile, "[B] Handshake OK (server). Sent size=%dx%d\n", W, H);
+        fflush(logfile);
+
+    } else if (cfg.mode == MODE_CLIENT) {
+        // CLIENT MODE: Connect to an existing Server
+
+        fprintf(logfile, "[B] MODE_CLIENT: connect to %s:%d\n", cfg.server_ip, cfg.port);
+        fflush(logfile);
+
+        // 1. Connect to the server IP/Port.
+        net_fd = net_client_connect(cfg.server_ip, cfg.port);
+        if (net_fd < 0) {
+            fprintf(logfile, "[B] ERROR: net_client_connect failed\n");
+            fflush(logfile);
+            exit(EXIT_FAILURE);
+        }
+
+        char line[256];
+
+        // --- HANDSHAKE PROTOCOL ---
+        // 1) Verify connection: Expect "ok", send "ook"
+        // Wait for server to say hello
+        if (net_recv_line(net_fd, line, sizeof(line)) < 0) die("[B] net_recv_line(ok)");
+        if (strcmp(line, "ok") != 0) die("[B] Expected 'ok'");
+        
+        // Respond: "I hear you"
+        if (net_send_line(net_fd, "ook") < 0) die("[B] net_send_line(ook)");
+
+        // 2) Synchronize Window Size: Expect "size W H", send "sok"
+        // Wait for server's required dimensions
+        if (net_recv_line(net_fd, line, sizeof(line)) < 0) die("[B] net_recv_line(size)");
+        
+        // Parse the size command
+        if (sscanf(line, "size %d %d", &peer_W, &peer_H) != 2) die("[B] Bad 'size' format");
+        
+        // Acknowledge size receipt
+        if (net_send_line(net_fd, "sok") < 0) die("[B] net_send_line(sok)");
+
+        // 3) Client Sanity Check: ensuring local terminal is large enough
+        // We cannot shrink the server's UI, so we must be at least as big as the server
+        int W, H;
+        get_term_size_pre_ncurses(&W, &H);
+        
+        if (W < peer_W || H < peer_H) {
+            // Log error to stderr (visible to user immediately) and file
+            fprintf(stderr, "[CLIENT] Terminal too small. Need at least %dx%d (current %dx%d)\n",
+                    peer_W, peer_H, W, H);
+            fprintf(logfile, "[B] Terminal too small. Need %dx%d (current %dx%d)\n",
+                    peer_W, peer_H, W, H);
+            fflush(logfile);
+            close(net_fd); // Clean up
+            exit(EXIT_FAILURE);
+        }
+
+        fprintf(logfile, "[B] Handshake OK (client). Peer size=%dx%d, local=%dx%d\n",
+                peer_W, peer_H, W, H);
+        fflush(logfile);
+    }
+    // ================================================================================ 
+
+    
+    // -----------------------------Heartbeat variables------------------------
     // Initialize heartbeat tracking
     set_last_hb_now(); // assume "alive" at start
 
