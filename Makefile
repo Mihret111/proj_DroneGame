@@ -5,7 +5,7 @@ TARGET = arp1
 BUILD_DIR = build
 
 # Source files
-SRCS = src/main.c src/server.c src/dynamics.c src/keyboard.c src/obstacles.c src/targets.c src/watchdog.c src/params.c src/util.c src/net.c
+SRCS = src/main.c src/server.c src/dynamics.c src/keyboard.c src/obstacles.c src/targets.c src/watchdog.c src/params.c src/util.c src/net.c src/protocol.c
 
 # Object files
 OBJS = $(patsubst src/%.c, $(BUILD_DIR)/%.o, $(SRCS))
