@@ -307,6 +307,10 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
     int peer_W = -1;     // remote screen width  (for scaling later)
     int peer_H = -1;     // remote screen height
     
+    //
+    int forced_max_x = -1;
+    int forced_max_y = -1;
+
     // Networking state variables
     // typedef enum { NET_SEND_DRONE_TAG, NET_SEND_DRONE_XY, NET_WAIT_DOK,
     //            NET_SEND_OBST_TAG, NET_WAIT_OBST_XY, NET_SEND_POK } NetPhase;
@@ -368,7 +372,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             exit(EXIT_FAILURE);
         }
 
-        // --- HANDSHAKE PROTOCOL ---
+        // ---Server HANDSHAKE PROTOCOL ---
         // 1) Verify connection: Send "ok", expect "ook"
         // This confirms the other side is indeed our client protocol
         if (net_send_line(net_fd, "ok") < 0) die("[B] net_send_line(ok)");
@@ -411,7 +415,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
 
         char line[256];
 
-        // --- HANDSHAKE PROTOCOL ---
+        // --- Client HANDSHAKE PROTOCOL ---
         // 1) Verify connection: Expect "ok", send "ook"
         // Wait for server to say hello
         if (net_recv_line(net_fd, line, sizeof(line)) < 0) die("[B] net_recv_line(ok)");
@@ -445,6 +449,9 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             close(net_fd); // Clean up
             exit(EXIT_FAILURE);
         }
+        forced_max_x = peer_W;
+        forced_max_y = peer_H;
+
 
         fprintf(logfile, "[B] Handshake OK (client). Peer size=%dx%d, local=%dx%d\n",
                 peer_W, peer_H, W, H);
@@ -480,6 +487,37 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
     } else {
         // If cmd doesnot permit colors, then continue without colors.
     }
+
+    // Define the whole window size
+    WINDOW *frame = NULL;
+    int frame_w = 0, frame_h = 0;
+    int frame_x0 = 0, frame_y0 = 0;
+
+    // 
+    if (cfg.mode == MODE_CLIENT && forced_max_x > 0 && forced_max_y > 0) {
+        frame_w = forced_max_x;
+        frame_h = forced_max_y;
+
+        int term_y, term_x;
+        getmaxyx(stdscr, term_y, term_x);
+
+        // first try anchoring top-left first to eliminate mess:
+        frame_y0 = 0;
+        frame_x0 = 0;
+
+        // (Later  try centering safely once everything is stable)
+        // frame_y0 = (term_y - frame_h) / 2; if (frame_y0 < 0) frame_y0 = 0;
+        // frame_x0 = (term_x - frame_w) / 2; if (frame_x0 < 0) frame_x0 = 0;
+
+        frame = newwin(frame_h, frame_w, frame_y0, frame_x0);
+        if (!frame) {
+            endwin();
+            fprintf(stderr, "[CLIENT] newwin() failed\n");
+            goto shutdown_and_exit;
+        }
+    }
+
+
 
     // ---------------- Install signal handlers for Watchdog ----------------
     struct sigaction sa_warn;
@@ -534,6 +572,21 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
     // --- Main event loop ---
     while (1) {
 
+        // Check if client terminal tries to resize too small
+        if (cfg.mode == MODE_CLIENT && forced_max_x > 0 && forced_max_y > 0) {
+            int real_y, real_x;
+            getmaxyx(stdscr, real_y, real_x);
+            if (real_x < forced_max_x || real_y < forced_max_y) {
+                endwin();
+                fprintf(stderr,
+                    "[CLIENT] Terminal resized too small. Need %dx%d, now %dx%d.\n"
+                    "Resize back and rerun.\n",
+                    forced_max_x, forced_max_y, real_x, real_y);
+                goto shutdown_and_exit;
+            }
+        }
+
+
         // ---------------- Watchdog notifications ----------------
         // Watchdog warning -> start banner
         // Convert the SIGUSR2 flag into a visible banner for 2 seconds.
@@ -560,7 +613,34 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         }
 
         // Queries current terminal size (for resizing)
-        getmaxyx(stdscr, max_y, max_x);
+        // getmaxyx(stdscr, max_y, max_x);
+        // if (cfg.mode == MODE_CLIENT && forced_max_x > 0 && forced_max_y > 0) {
+        //     max_x = forced_max_x;
+        //     max_y = forced_max_y;
+            
+        //     int term_y, term_x;
+        //     getmaxyx(stdscr, term_y, term_x);
+
+        //     // Center the frame inside the terminal (or set 0,0 if you prefer top-left)
+        //     frame_y0 = (term_y - frame_h) / 2;
+        //     frame_x0 = (term_x - frame_w) / 2;
+        //     if (frame_y0 < 0) frame_y0 = 0;
+        //     if (frame_x0 < 0) frame_x0 = 0;
+
+        //     frame = newwin(frame_h, frame_w, frame_y0, frame_x0);
+        //     if (!frame) {
+        //         endwin();
+        //         fprintf(stderr, "[CLIENT] newwin() failed\n");
+        //         goto shutdown_and_exit;
+        //     }
+        // } else {
+        //     // WINDOW *win = (frame ? frame : stdscr);
+        //     getmaxyx(stdscr, max_y, max_x);
+        // }
+        // IWhile in loop, get size from the correct window
+        WINDOW *win = (frame ? frame : stdscr);
+        getmaxyx(win, max_y, max_x);
+
 
         // Plans layout:
         //   - 2 top lines of info
@@ -663,7 +743,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             KeyMsg km;
             int n = read(fd_kb, &km, sizeof(km));
             if (n <= 0) {
-                mvprintw(0, 1, "[B] Keyboard process ended (EOF).");
+                mvwprintw(win,0, 1, "[B] Keyboard process ended (EOF).");
                 refresh();
                 break;
             }
@@ -811,7 +891,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                 }
             }
             else if (n <= 0) {
-                mvprintw(1, 1, "[B] Dynamics process ended (EOF).");
+                mvwprintw(win,1, 1, "[B] Dynamics process ended (EOF).");
                 refresh();
                 break;
             } else {
@@ -910,7 +990,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             int n = read(fd_obs, &msg, sizeof(msg));
             if (n <= 0) {
                 // if nth read, O process ended; may log and continue
-                mvprintw(0, 1, "[B] Obstacle generator ended.");
+                mvwprintw(win,0, 1, "[B] Obstacle generator ended.");
                 // Optionally: fd_obs = -1 and stop using it
             } else {
                 if (paused){
@@ -975,7 +1055,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             TargetSetMsg msg;
             int n = read(fd_tgt, &msg, sizeof(msg));
             if (n <= 0) {
-                mvprintw(1, 1, "[B] Target generator ended.");
+                mvwprintw(win,1, 1, "[B] Target generator ended.");
             } else {
                 if (paused) {
                     fprintf(logfile,
@@ -1109,13 +1189,21 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         // ------------------------------------------------------------------
         // Draws UI (drone world + inspection panel)
         // ------------------------------------------------------------------
-        erase();
-        box(stdscr, 0, 0);
+        
+        // based on forced_max_x and forced_max_y (retirieved from server for client mode operation)
+        
+        // if (frame) {    // flickered when i did this (visible on/off)
+        //     werase(stdscr);
+        //     wrefresh(stdscr);
+        // }
+        werase(win);
+        box(win, 0, 0);
+
 
         // Top info lines
-        mvprintw(top_info_y1, 2,
+        mvwprintw(win, top_info_y1, 2,
                  "Controls: w e r / s d f / x c v | d=brake, p=pause, O=reset, q=quit");
-        mvprintw(top_info_y2, 2,
+        mvwprintw(win, top_info_y2, 2,
                  "Paused: %s", paused ? "YES" : "NO");
         
         // Watchdog blinking warning: visible only when active AND blink phase is ON
@@ -1132,26 +1220,22 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             if (has_colors()) {
                 // Create once somewhere during init if you want:
                 // init_pair(3, COLOR_RED, COLOR_BLACK);
-                attron(COLOR_PAIR(3) | A_BOLD | A_REVERSE);
-                mvprintw(top_info_y2, 18, " %s ", watchdog_banner_msg);
-                mvprintw(top_info_y2, 60, "KILL IN: %.2fs", kill_in);
-                attroff(COLOR_PAIR(3) | A_BOLD | A_REVERSE);
+                wattron(win, COLOR_PAIR(3) | A_BOLD | A_REVERSE);
+                mvwprintw(win,top_info_y2, 18, " %s ", watchdog_banner_msg);
+                mvwprintw(win,top_info_y2, 60, "KILL IN: %.2fs", kill_in);
+                wattroff(win, COLOR_PAIR(3) | A_BOLD | A_REVERSE);
             } else {
-                attron(A_BOLD | A_REVERSE);
-                mvprintw(top_info_y2, 18, " %s ", watchdog_banner_msg);
-                mvprintw(top_info_y2, 60, "KILL IN: %.2fs", kill_in);
-                attroff(A_BOLD | A_REVERSE);
+                wattron(win, A_BOLD | A_REVERSE);
+                mvwprintw(win,top_info_y2, 18, " %s ", watchdog_banner_msg);
+                mvwprintw(win,top_info_y2, 60, "KILL IN: %.2fs", kill_in);
+                wattroff(win, A_BOLD | A_REVERSE);
             }
         }
-
-
-
-        
 
         // Horizontal separator row (under top info)
         if (sep_y >= 1 && sep_y <= max_y - 2) {
             for (int x = 1; x < max_x - 1; ++x) {
-                mvaddch(sep_y, x, '-');
+                mvwaddch(win,sep_y, x, '-');
             }
         }
 
@@ -1159,7 +1243,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         int sep_x = insp_start_x - 1;
         if (sep_x > 1 && sep_x < max_x - 1) {
             for (int y = world_top; y <= world_bottom; ++y) {
-                mvaddch(y, sep_x, '|');
+                mvwaddch(win,y, sep_x, '|');
             }
         }
 
@@ -1178,7 +1262,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         if (sy < world_top) sy = world_top;
         if (sy > world_bottom) sy = world_bottom;
 
-        mvaddch(sy, sx, '+'); // Draws drone
+        mvwaddch(win,sy, sx, '+'); // Draws drone
 
         // Draw remote (server) drone on client as 'X' using same world->screen mapping
         if (cfg.mode == MODE_CLIENT && remote_drone_valid) {
@@ -1194,7 +1278,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
 
             // color it (use defined pair)
             // attron(COLOR_PAIR(2));q
-            mvaddch(sy, sx, 'x');
+            mvwaddch(win,sy, sx, 'x');
             // attroff(COLOR_PAIR(2));
         }
 
@@ -1212,10 +1296,10 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             if (oy < world_top) oy = world_top;
             if (oy > world_bottom) oy = world_bottom;
             
-            attron(COLOR_PAIR(1));
-            mvaddch(oy, ox, 'o');  // TODO: Adds color to make them orange
+            wattron(win, COLOR_PAIR(1));
+            mvwaddch(win,oy, ox, 'o');  // TODO: Adds color to make them orange
             
-            attroff(COLOR_PAIR(1));
+            wattroff(win, COLOR_PAIR(1));
         }
 
         for (int k = 0; k < NUM_TARGETS; ++k) {
@@ -1229,9 +1313,9 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             if (ty < world_top) ty = world_top;
             if (ty > world_bottom) ty = world_bottom;
             
-            attron(COLOR_PAIR(2));
-            mvaddch(ty, tx, 'T');  // Placeholder, later make them numbered
-            attroff(COLOR_PAIR(2));
+            wattron(win, COLOR_PAIR(2));
+            mvwaddch(win,ty, tx, 'T');  // Placeholder, later make them numbered
+            wattroff(win, COLOR_PAIR(2));
         }
 
 
@@ -1241,29 +1325,29 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
 
         
         if (info_x < max_x - 1) {
-            mvprintw(info_y,     info_x, "INSPECTION");
-            mvprintw(info_y + 2, info_x, "Last key: %c", last_key);
-            mvprintw(info_y + 4, info_x, "Fx = %.2f", cur_force.Fx);
-            mvprintw(info_y + 5, info_x, "Fy = %.2f", cur_force.Fy);
-            mvprintw(info_y + 7, info_x, "x  = %.2f", cur_state.x);
-            mvprintw(info_y + 8, info_x, "y  = %.2f", cur_state.y);
-            mvprintw(info_y + 9, info_x, "vx = %.2f", cur_state.vx);
-            mvprintw(info_y +10, info_x, "vy = %.2f", cur_state.vy);
+            mvwprintw(win, info_y,     info_x, "INSPECTION");
+            mvwprintw(win,info_y + 2, info_x, "Last key: %c", last_key);
+            mvwprintw(win,info_y + 4, info_x, "Fx = %.2f", cur_force.Fx);
+            mvwprintw(win,info_y + 5, info_x, "Fy = %.2f", cur_force.Fy);
+            mvwprintw(win,info_y + 7, info_x, "x  = %.2f", cur_state.x);
+            mvwprintw(win,info_y + 8, info_x, "y  = %.2f", cur_state.y);
+            mvwprintw(win,info_y + 9, info_x, "vx = %.2f", cur_state.vx);
+            mvwprintw(win,info_y +10, info_x, "vy = %.2f", cur_state.vy);
             
-            mvprintw(info_y +12, info_x, "Score: %d", g_score);
-            mvprintw(info_y +13, info_x, "Targets collected: %d", g_targets_collected);
+            mvwprintw(win,info_y +12, info_x, "Score: %d", g_score);
+            mvwprintw(win,info_y +13, info_x, "Targets collected: %d", g_targets_collected);
             if (g_last_hit_step >= 0 ) {
                 time_since_last_hit = (g_step_counter - g_last_hit_step) * params .dt;
 
-                mvprintw(info_y +15, info_x, "Since last hit: %.2f sec", time_since_last_hit);
+                mvwprintw(win,info_y +15, info_x, "Since last hit: %.2f sec", time_since_last_hit);
             }
             else {
-                mvprintw(info_y +14, info_x, "Last hit: none");
+                mvwprintw(win,info_y +14, info_x, "Last hit: none");
             }
 
         }
 
-        refresh();
+        wrefresh(win);
     }
  
 
@@ -1278,6 +1362,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             fclose(logfile);
         }
         // Ends ncurses
+        if (frame) delwin(frame);
         endwin();
         // Closes pipes
         close(fd_kb);
