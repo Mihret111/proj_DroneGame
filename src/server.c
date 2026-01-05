@@ -115,6 +115,7 @@ static char cp_last_tag[64];
 
 
 static int server_proto_tick(int net_fd,
+                             const SimParams *params,
                              double myx, double myy,
                              int *have_obst, double *ox, double *oy)
 {
@@ -134,7 +135,11 @@ static int server_proto_tick(int net_fd,
         return 0;
 
     case SP_SEND_DRONE_XY:
-        if (proto_send_xy(net_fd, myx, myy) < 0) return -1;
+        // if (proto_send_xy(net_fd, myx, myy) < 0) return -1;
+        double xv, yv;
+        local_to_virtual(myx, myy, params, &xv, &yv);       // coordinate frame conversion
+        if (proto_send_xy(net_fd, xv, yv) < 0) return -1;
+
         sp_phase = SP_WAIT_DOK;
         return 0;
 
@@ -153,12 +158,14 @@ static int server_proto_tick(int net_fd,
         return 0;
 
     case SP_WAIT_OBST_XY: {
-        double x, y;
-        if (proto_recv_xy(net_fd, &x, &y) < 0) {
+        double xv, yv;
+        if (proto_recv_xy(net_fd, &xv, &yv) < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) return 1;
             return -1;
         }
-        sp_last_ox = x; sp_last_oy = y;
+        double lx, ly;
+        virtual_to_local(xv, yv, params, &lx, &ly);
+        sp_last_ox = lx; sp_last_oy = ly;
         sp_phase = SP_SEND_POK;
         return 0;
     }
@@ -179,6 +186,7 @@ static int server_proto_tick(int net_fd,
 
 
 static int client_proto_tick(int net_fd,
+                             const SimParams *params, 
                              double myx, double myy,
                              int *have_remote_drone,
                              double *rx, double *ry,
@@ -218,22 +226,30 @@ static int client_proto_tick(int net_fd,
         // unknown tag
         return -1;
 
-    case CP_WAIT_DRONE_XY:
-        if (proto_recv_xy(net_fd, rx, ry) < 0) {
+    case CP_WAIT_DRONE_XY:{
+        double xv, yv;
+        if (proto_recv_xy(net_fd, &xv, &yv) < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) return 1;
             return -1;
         }
+        virtual_to_local(xv, yv, params, rx, ry);
 
         if (net_send_line(net_fd, "dok") < 0) return -1;
 
         *have_remote_drone = 1;
         cp_phase = CP_WAIT_TAG;
         return 0;
+    }
 
-    case CP_SEND_OBST_XY:
-        if (proto_send_xy(net_fd, myx, myy) < 0) return -1;
+    case CP_SEND_OBST_XY:{
+        // if (proto_send_xy(net_fd, myx, myy) < 0) return -1;
+        double xv, yv;
+        local_to_virtual(myx, myy, params, &xv, &yv);       // coordinate frame conversion
+        if (proto_send_xy(net_fd, xv, yv) < 0) return -1;
+
         cp_phase = CP_WAIT_POK;
         return 0;
+    }
 
     case CP_WAIT_POK: {
         char line[64];
@@ -1126,7 +1142,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
 
             // trying a few micro-steps per frame:keeps it responsive even if net is behind
             for (int k = 0; k < 4; k++) {
-                int rc = server_proto_tick(net_fd, cur_state.x, cur_state.y, &have, &ox, &oy);
+                int rc = server_proto_tick(net_fd, &params, cur_state.x, cur_state.y, &have, &ox, &oy);
                 if (rc == 1) break;        // would block -> stop trying this frame
                 if (rc < 0) {              // hard error -> terminate networking
                     fprintf(logfile, "[B] NET: server_proto_tick hard error -> disconnect\n");
@@ -1155,10 +1171,11 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             // advance protocol state machine a few micro-steps per frame
             for (int k = 0; k < 4; k++) {
                 int rc = client_proto_tick(net_fd,
-                                        cur_state.x, cur_state.y,
-                                        &have_remote,
-                                        &sx, &sy,
-                                        &server_quit);
+                                            &params,
+                                            cur_state.x, cur_state.y,
+                                            &have_remote,
+                                            &sx, &sy,
+                                            &server_quit);
 
                 if (rc == 1) break;          // would block -> stop this frame
                 if (rc < 0) {

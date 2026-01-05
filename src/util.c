@@ -500,3 +500,40 @@ FILE *open_process_log(const char *name, const char *role_tag) {
     fflush(fp);
     return fp;
 }
+
+
+// ------------------ --------------------------------------------------------------------------
+// Networking utilities
+// ------------------ --------------------------------------------------------------------------    
+void local_to_virtual(double x, double y,
+                             const SimParams *p,
+                             double *xv, double *yv)
+{
+    // Default: bottom-left origin mapping for a centered world
+    const double x0 = p->world_half;
+    const double y0 = p->world_half;
+    const double a  = 0.0;  // set to spec alpha if needed
+
+    const double ca = cos(a), sa = sin(a);
+
+    *xv = x0 + x*ca - y*sa;
+    *yv = y0 + x*sa + y*ca;
+}
+
+void virtual_to_local(double xv, double yv,
+                             const SimParams *p,
+                             double *x, double *y)
+{
+    const double x0 = p->world_half;
+    const double y0 = p->world_half;
+    const double a  = 0.0;  // same alpha
+
+    const double ca = cos(a), sa = sin(a);
+
+    const double dx = xv - x0;
+    const double dy = yv - y0;
+
+    // inverse rotation
+    *x =  dx*ca + dy*sa;
+    *y = -dx*sa + dy*ca;
+}

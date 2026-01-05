@@ -112,4 +112,13 @@ void ensure_logs_dir(void);
 // Open a process log file under logs/<name>.log with line buffering.
 FILE* open_process_log(const char *name, const char *role_tag);
 
+// networking utilities
+void local_to_virtual(double x, double y,
+                             const SimParams *p,
+                             double *xv, double *yv);
+
+void virtual_to_local(double xv, double yv,
+                             const SimParams *p,
+                             double *x, double *y);
+
 #endif // UTIL_H
