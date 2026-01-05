@@ -17,3 +17,5 @@ wall_gain=100
 
 wd_warn_sec = 2
 wd_kill_sec = 10
+req_timeout_ms = 40   # timeout for client requests in ms
+# req_timeout_ms = 80   # previous timeout for client requests in ms

@@ -292,10 +292,14 @@ static char watchdog_banner_msg[] = "WATCHDOG WARNING, system may be unstable";
 void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int fd_tgt, pid_t pid_W, SimParams params, RunConfig cfg) 
 {
     // --- Opens logfile ---
-    FILE *logfile = open_process_log("server", "B");
+    // --- Opens logfile ---
+    const char *log_name = (cfg.mode == MODE_CLIENT) ? "server_client" : "server_server";
+    FILE *logfile = open_process_log(log_name, "B");
     if (!logfile) {
         endwin();
-        die("[B] cannot open logs/server.log");
+        char err_msg[128];
+        snprintf(err_msg, sizeof(err_msg), "[B] cannot open logs/%s.log", log_name);
+        die(err_msg);
     }
     // -----------------------------Networking variables------------------------
     int net_fd = -1;     // connection socket (socket fd if connected)
@@ -619,7 +623,8 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
 
             struct timeval tv;
             tv.tv_sec  = 0;
-            tv.tv_usec = 100000; // 100 ms
+            // tv.tv_usec = 100000; // 100 ms
+            tv.tv_usec = 10000; // 10 ms
 
             sel = select(maxfd, &rfds, NULL, NULL, &tv);
 
@@ -1033,13 +1038,13 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
     }
 
 }
-        // =================== ASSIGNMENT 3: NETWORK STEP (NON-BLOCKING) ===================
+        // =================== NETWORK STEP (NON-BLOCKING) ===================
         if (cfg.mode == MODE_SERVER && net_fd >= 0 && !paused) {
 
             int have = 0;
             double ox = 0.0, oy = 0.0;
 
-            // try a few micro-steps per frame (keeps it responsive even if net is behind)
+            // trying a few micro-steps per frame:keeps it responsive even if net is behind
             for (int k = 0; k < 4; k++) {
                 int rc = server_proto_tick(net_fd, cur_state.x, cur_state.y, &have, &ox, &oy);
                 if (rc == 1) break;        // would block -> stop trying this frame
@@ -1060,7 +1065,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         // ================================================================================
 
         // Client mode net step can also live here (same idea: read tag, act)
-        // =================== ASSIGNMENT 3: CLIENT NETWORK STEP (NON-BLOCKING) ===================
+        // =================== CLIENT NETWORK STEP (NON-BLOCKING) ===================
         if (cfg.mode == MODE_CLIENT && net_fd >= 0 && !paused) {
 
             int have_remote = 0;

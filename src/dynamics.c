@@ -106,6 +106,15 @@ void run_dynamics_process(int force_fd, int state_fd, SimParams params) {
         double ax = (Fx_total - K * s.vx) / M;
         double ay = (Fy_total - K * s.vy) / M;
 
+
+        // // --- safety clamp: acceleration    ---
+        // const double AMAX = 10.0; // m/s^2 (tune 5–30)
+        // double a = hypot(ax, ay);
+        // if (a > AMAX) {
+        //     ax *= (AMAX / a);
+        //     ay *= (AMAX / a);
+        // }
+
         // --------------------------------------------------------------
         // Numerical Integration: Standard Euler Method
         // v(t+dt) = v(t) + a * dt
@@ -116,6 +125,16 @@ void run_dynamics_process(int force_fd, int state_fd, SimParams params) {
 
         s.x  += s.vx * T;
         s.y  += s.vy * T;
+
+        // --- safety clamp: velocity ---
+        const double VMAX = 10.0; // m/s (tune 5–30)
+        double v = hypot(s.vx, s.vy);
+        if (v > VMAX) {
+            s.vx *= (VMAX / v);
+            s.vy *= (VMAX / v);
+        }
+
+        
 
         // Sends state back to B
         if (write(state_fd, &s, sizeof(s)) == -1) {

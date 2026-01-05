@@ -232,12 +232,22 @@ void compute_repulsive_P(const DroneStateMsg *s,
     const double eps_wall = 1;
     const double eps_obst = 1;
 
-    const double FMAX = 50.0;   // tune: 20–200 depending on your force_step
+    // const double FMAX = 50.0;   // tune: 20–200 depending on your force_step
+
+    const double FMAX_SINGLE = 150.0;   // clamp per-source contribution (wall or obstacle)
+    const double FMAX_TOTAL  = 200.0;   // clamp total repulsion vector (sum of all)
 
     *Px = 0.0;
     *Py = 0.0;
 
-    
+    // // open loffile here
+    // FILE *logfile = open_process_log("obstacles", "O");
+    // if (!logfile) {
+    //     // If log fails, still run; or exit. I recommend exit for assignment clarity:
+    //     fprintf(stderr, "[O] cannot open obstacles log\n");
+    //     // exit(EXIT_FAILURE);
+    // }
+
     // Computes wall repulsion force
     // Returns vector (Px,Py) as the sum of contributions for the 4 borders
     // ------------------ --------------------------------------------------------------
@@ -247,26 +257,26 @@ void compute_repulsive_P(const DroneStateMsg *s,
         double wall_gain      = params->wall_gain;
 
         if (wall_clearance > 0.0 && wall_gain > 0.0) {
-            // Right wall at x = +world_half
+            // Right wall at x = +world_half  -> push left
             double d_right = world_half - s->x;
             if (d_right < wall_clearance) {
                 if (d_right < eps_wall) d_right = eps_wall;
                 double mag = wall_gain * (1.0/d_right - 1.0/wall_clearance);
                 if (mag < 0.0) mag = 0.0;
+                if (mag > FMAX_SINGLE) mag = FMAX_SINGLE;
                 // Pushes left
                 *Px -= mag; // py=0 here 
-                if (mag > FMAX) mag = FMAX;
             }
 
-            // Left wall at x = -world_half
+            // Left wall at x = -world_half  -> push right
             double d_left = world_half + s->x;
             if (d_left < wall_clearance) {
                 if (d_left < eps_wall) d_left = eps_wall;
                 double mag = wall_gain * (1.0/d_left - 1.0/wall_clearance);
                 if (mag < 0.0) mag = 0.0;
+                if (mag > FMAX_SINGLE) mag = FMAX_SINGLE;
                 // Pushes right
                 *Px += mag;
-                if (mag > FMAX) mag = FMAX;
             }
 
             // Top wall at y = +world_half
@@ -275,9 +285,9 @@ void compute_repulsive_P(const DroneStateMsg *s,
                 if (d_top < eps_wall) d_top = eps_wall;
                 double mag = wall_gain * (1.0/d_top - 1.0/wall_clearance);
                 if (mag < 0.0) mag = 0.0;
+                if (mag > FMAX_SINGLE) mag = FMAX_SINGLE;
                 // Pushes down
                 *Py -= mag;
-                if (mag > FMAX) mag = FMAX;
             }
 
             // Bottom wall at y = -world_half
@@ -286,9 +296,9 @@ void compute_repulsive_P(const DroneStateMsg *s,
                 if (d_bottom < eps_wall) d_bottom = eps_wall;
                 double mag = wall_gain * (1.0/d_bottom - 1.0/wall_clearance);
                 if (mag < 0.0) mag = 0.0;
+                if (mag > FMAX_SINGLE) mag = FMAX_SINGLE;
                 // Pushes up
                 *Py += mag;
-                if (mag > FMAX) mag = FMAX;
             }
         }
     }
@@ -297,7 +307,7 @@ void compute_repulsive_P(const DroneStateMsg *s,
     // Uses fixed obstacle params derived from world size
     // ------------------ --------------------------------------------------------------
     if (include_obstacles && obs && num_obs > 0) {
-         const double obs_clearance = params->world_half * 0.30;
+        const double obs_clearance = params->world_half * 0.30;    // * 0.6??
         const double obs_gain      = 120.0;   // 120 behaved well
         if (obs_clearance <= 0.0 || obs_gain <= 0.0) {
             return;
@@ -313,22 +323,30 @@ void compute_repulsive_P(const DroneStateMsg *s,
             double dy  = s->y - oy;
             double rho = sqrt(dx*dx + dy*dy);
 
-            if (rho < eps_obst) {
-                rho = eps_obst;
-            }
+            if (rho < eps_obst) rho = eps_obst;
 
             if (rho < obs_clearance) {
                 double mag = obs_gain * (1.0/rho - 1.0/obs_clearance);
                 if (mag < 0.0) mag = 0.0;
+                if (mag > FMAX_SINGLE) mag = FMAX_SINGLE;
 
                 double ux = dx / rho;
                 double uy = dy / rho;
 
                 *Px += mag * ux;
                 *Py += mag * uy;
-                if (mag > FMAX) mag = FMAX;
             }
         }
+    }
+
+    // fprintf(logfile, "Repulsion: Px=%.2f Py=%.2f\n", Px, Py);
+
+    // ---------------- TOTAL SATURATION ----------------
+    double norm = sqrt((*Px)*(*Px) + (*Py)*(*Py));
+    if (norm > FMAX_TOTAL) {
+        double scale = FMAX_TOTAL / norm;
+        *Px *= scale;
+        *Py *= scale;
     }
 }
 

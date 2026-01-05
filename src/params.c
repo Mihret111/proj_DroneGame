@@ -55,7 +55,7 @@ void init_default_params(SimParams *p) {
     p->wd_kill_sec    = 10;
     
     // Network defaults
-    p->req_timeout_ms = 80; // 80ms default
+    p->req_timeout_ms = 20; // 20ms default
 }
 
 // Loads parameters from a simple "key=value" file.
