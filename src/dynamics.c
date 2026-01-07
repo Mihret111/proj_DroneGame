@@ -12,6 +12,8 @@
 #include <errno.h>
 #include <time.h>
 #include <fcntl.h>
+#include <math.h>
+
 
 /**
  * @brief Main loop for the Dynamics (D) process.

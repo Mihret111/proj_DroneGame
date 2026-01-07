@@ -16,7 +16,7 @@ all: $(TARGET)
 
 # Link the executable
 $(TARGET): $(OBJS)
-	$(CC) $(OBJS) -o $(TARGET) $(LDFLAGS)
+	$(CC) $(OBJS) -o $(TARGET) $(LDFLAGS)  -lm
 
 # Compile source files into object files
 $(BUILD_DIR)/%.o: src/%.c

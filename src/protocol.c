@@ -4,7 +4,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-// Your existing network helpers:
+// network helpers:
 int net_send_line(int fd, const char *line);
 int net_sendf(int fd, const char *fmt, ...);
 int net_recv_line(int fd, char *buf, size_t maxlen);

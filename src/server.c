@@ -337,8 +337,8 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
     //---------------- As seen by server ----------------
     // Remote obstacle position received from client (server interprets as one obstacle)
     // static int remote_obst_valid = 0;
-    static double remote_obst_x = 0.0;
-    static double remote_obst_y = 0.0;
+    // static double remote_obst_x = 0.0;
+    // static double remote_obst_y = 0.0;
 
     // Pick one obstacle slot to represent the remote obstacle in server mode
     // In server/client mode, O generator is OFF, thus we reuse slot 0
@@ -444,8 +444,18 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         // Wait for server's required dimensions
         if (net_recv_line(net_fd, line, sizeof(line)) < 0) die("[B] net_recv_line(size)");
         
-        // Parse the size command
-        if (sscanf(line, "size %d %d", &peer_W, &peer_H) != 2) die("[B] Bad 'size' format");
+        // Parse the size command (supports multiple formats)
+        int parsed = 0;
+        if (!parsed && sscanf(line, "size %d %d", &peer_W, &peer_H) == 2) parsed = 1;
+        if (!parsed && sscanf(line, "size %d, %d", &peer_W, &peer_H) == 2) parsed = 1;
+        if (!parsed && sscanf(line, "%d, %d", &peer_W, &peer_H) == 2) parsed = 1;
+        if (!parsed && sscanf(line, "%d %d", &peer_W, &peer_H) == 2) parsed = 1;
+
+        if (!parsed)
+            {
+            fprintf(logfile, "Received bad size line: '%s'\n", line);
+            die("[B] Bad 'size' format");
+            }; 
         
         // Acknowledge size receipt
         if (net_send_line(net_fd, "sok") < 0) die("[B] net_send_line(sok)");
@@ -514,8 +524,8 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         frame_w = forced_max_x;
         frame_h = forced_max_y;
 
-        int term_y, term_x;
-        getmaxyx(stdscr, term_y, term_x);
+        // int term_y, term_x;
+        // getmaxyx(stdscr, term_y, term_x);
 
         // first try anchoring top-left first to eliminate mess:
         frame_y0 = 0;
