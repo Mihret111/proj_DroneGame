@@ -23,7 +23,16 @@ A dynamic drone navigation game where the objective is to control a drone to col
         ```bash
         ./arp1
         ```
-    4. Clean: To remove all compiled files and start fresh
+    4. **Alternative**: The program can be build and run in one step:
+        ```bash
+        make run
+        ```
+    5. **Select Mode**: The program will prompt you to select a mode:
+        - `1` : **Standalone** (Single player, standard Assignment 2)
+        - `2` : **Server** (Host a networked game)
+        - `3` : **Client** (Join a networked game)
+
+    6. Clean: To remove all compiled files and start fresh
         ```bash
         make clean
         ```
@@ -35,6 +44,7 @@ A dynamic drone navigation game where the objective is to control a drone to col
   - **Left world panel** (drone, obstacles, targets)
   - **Right inspection panel** (state, forces, score, logs)
 
+### Mode 1: Standalone
 During execution:
 
 - The **Keyboard process (I)** captures your keypresses.
@@ -42,6 +52,17 @@ During execution:
 - The **Dynamics process (D)** simulates the drone motion.
 - The **Obstacle generator (O)** and **Target generator (T)** periodically spawn entities.
 - The **Watchdog process (W)** monitors system health via heartbeats. It detects freezes and terminates the system on failure.
+
+### Mode 2 & 3: Networked Game
+
+- **Setup**:
+  1.  Start the **Server** first (`./arp1` -> `2`). Enter a port (default `5001`). The server waits for a connection.
+  2.  Start the **Client** (`./arp1` -> `3`). Enter the port and the Server's IP (default `127.0.0.1`).
+- **Interaction**:
+  - The **Server** dictates the window size. The **Client** window must be at least as large as the Server's.
+  - **Obstacles/Targets/Watchdog are DISABLED**.
+  - Instead, the connected peer's drone appears on your screen.
+  - **Your Goal**: Avoid colliding with the other drone! The other drone acts as a moving obstacle.
 
 To exit cleanly, press `q` or `Q` at any moment.
 

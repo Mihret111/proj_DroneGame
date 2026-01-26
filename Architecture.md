@@ -2,11 +2,13 @@
 
 This project implements a simple 2D drone simulator using multiple POSIX processes and IPC primitives. The Master process initializes the simulation, creates communication pipes, and forks five child processes: **Keyboard (I)**, **Dynamics (D)**, **Obstacles (O)**, **Targets (T)**, and **Watchdog (W)**. After forking, the Master process transitions into the **Server (B)** process. The server aggregates user input, environment information and simulation state, computes total forces (including wall and obstacle repulsion), and updates a User-Interface using `ncurses`.
 
+The application now supports ** Networked Modes**, allowing two instances to connect over a TCP network.
+
 # 1- Architecture Sketch
 
 ```mermaid
 graph TD
-    subgraph "Process Architecture"
+    subgraph "Process Architecture (Standalone Mode)"
     I["Keyboard (I)"] -->|"KeyMsg"| B[" Blackboard Server (B)"]
     B -->|"ForceStateMsg"| D["Dynamics (D)"]
     D -->|"DroneStateMsg"| B
@@ -17,6 +19,28 @@ graph TD
     W ==>|"SIGTERM (Kill)"| EXIT{"System Shutdown<br/>(B, I, D, O, T)"}
     end
 ```
+
+```mermaid
+graph TD
+    subgraph "Networked Mode Architecture"
+    
+        subgraph "Instance 1 (Server)"
+            I1["Keyboard (I)"] -->|"KeyMsg"| B1["Blackboard Server (B)"]
+            B1 -->|"ForceStateMsg"| D1["Dynamics (D)"]
+            D1 -->|"DroneStateMsg"| B1
+        end
+
+        subgraph "Instance 2 (Client)"
+            I2["Keyboard (I)"] -->|"KeyMsg"| B2["Blackboard Server (B)"]
+            B2 -->|"ForceStateMsg"| D2["Dynamics (D)"]
+            D2 -->|"DroneStateMsg"| B2
+        end
+
+        B1 <==>|"TCP/IP Protocol<br/>(Drone Pos <-> Obstacle Pos)"| B2
+    end
+```
+
+> **Note on Network Mode**: In **Server** and **Client** modes, the **Obstacles (O)**, **Targets (T)**, and **Watchdog (W)** processes are **disabled**. The system relies on the network peer for obstacle data.
 # 2. Active Components — Definitions, IPC, and Algorithms
 
 ## 2.1 Keyboard Process (I)
@@ -34,6 +58,24 @@ graph TD
     - `p` → toggle pause
     - `R` → reset drone
     - `q` → quit all processes
+
+## 2.2 Modes of Operation (Assignment 3)
+
+The system prompts for a mode at startup:
+
+1.  **Standalone**: Standard Assignment 2 behavior. All processes (I, D, B, O, T, W) are active.
+2.  **Server**:
+    *   Acts as the game host.
+    *   Listens on a TCP Port.
+    *   Disables Obstacles (O), Targets (T), and Watchdog (W).
+    *   Receives the Client's drone position and treats it as a simplified obstacle.
+    *   Send its drone position to the Client.
+3.  **Client**:
+    *   Connects to the Server's IP/Port.
+    *   Disables O, T, W.
+    *   Receives window dimensions from Server.
+    *   Send its drone position to the Server.
+    *   Receives the Server's drone position and displays it not as a target but as an entity to avoid.
 
 ## 2.2 Server / Blackboard Process (B)
 - Role: Main coordinator. Manages all IPC, world state, UI, scoring, environment logic.
@@ -140,6 +182,31 @@ graph TD
     - If silence > 10s: Terminates the entire system.
     - The timeout values are configurable in `params.txt`.
 
+## 2.9 Network Protocol
+
+When operating in **Server** or **Client** mode, the application uses a custom protocol.
+
+### Handshake
+1.  **Connection**: Server listens, Client connects.
+2.  **Verification**: Server sends `ok`, Client responds `ook`.
+3.  **Window Synchronization**:
+    *   Server sends `size <Width> <Height>`
+    *   Client resizes/verifies and responds `sok` (or `sok ...`).
+
+### Game Loop Protocol
+The Server and Client exchange state in a lock-step fashion every simulation cycle:
+
+1.  **Drone State Exchange**:
+    *   Sender sends `drone`.
+    *   Sender sends `X Y` (Virtual Coordinates).
+    *   Receiver responds `dok`.
+2.  **Obstacle State Exchange** (The "other" drone is seen as an obstacle):
+    *   Sender sends `obst`.
+    *   Sender sends `X Y` (Virtual Coordinates).
+    *   Receiver responds `pok`.
+
+*Note: Coordinates are normalized to a "Virtual System" to handle different window sizes or offsets.*
+
 ## 3 File Organization
 
 ### 3.1 File Structure
@@ -156,6 +223,8 @@ proj_DroneGame/
 │   ├── targets.c        # Target generation
 │   ├── watchdog.c       # System monitor
 │   ├── params.c         # Config loader
+│   ├── net.c            # Tcp/Ip networking wrapper
+│   ├── protocol.c       # Game protocol handling
 │   └── util.c           # Utilities
 │
 ├── headers/      <-- Header files (.h)
@@ -166,6 +235,9 @@ proj_DroneGame/
 │   ├── targets.h
 │   ├── watchdog.h
 │   ├── params.h
+│   ├── net.h
+│   ├── protocol.h
+│   ├── runmode.h
 │   ├── util.h
 │   └── messages.h
 │
@@ -190,6 +262,8 @@ proj_DroneGame/
 -   `targets.c`: Implementation of the Targets (T) generator.
 -   `watchdog.c`: Implementation of the Watchdog (W) process.
 -   `params.c`: Helper functions for loading and initializing simulation parameters.
+-   `net.c`: socket wrappers and timeout utilities.
+-   `protocol.c`: Visualization/Serialization of connection handshake and game state.
 -   `util.c`: Shared utility functions (math, logging, helpers).
 
 ### 3.3 Headers (`./headers/`)
@@ -200,6 +274,9 @@ proj_DroneGame/
 *   `targets.h`: Targets definitions.
 *   `watchdog.h`: Watchdog definitions.
 *   `params.h`: Parameter definitions.
+*   `net.h`: Networking primitives.
+*   `protocol.h`: Protocol handlers.
+*   `runmode.h`: Run configuration enumerations.
 *   `util.h`: Utility definitions.
 *   `messages.h`: IPC message structures.
 
