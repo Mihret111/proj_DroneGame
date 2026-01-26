@@ -31,39 +31,54 @@ static void prompt_run_config(RunConfig *cfg) {
     printf("1) standalone\n");
     printf("2) server\n");
     printf("3) client\n");
-    char input[32];
+    
+    char line[256];
     while (1) {
         printf("Select [1, 2 or 3] (q to quit): ");
         fflush(stdout);
         
-        if (scanf("%31s", input) != 1) exit(0); // Handle EOF
+        if (!fgets(line, sizeof(line), stdin)) exit(0); 
+        
+        // Remove trailing newline
+        line[strcspn(line, "\n")] = 0;
 
-        if (strcmp(input, "1") == 0) {
+        if (strcmp(line, "1") == 0) {
             cfg->mode = MODE_STANDALONE;
             break;
-        } else if (strcmp(input, "2") == 0) {
+        } else if (strcmp(line, "2") == 0) {
             cfg->mode = MODE_SERVER;
             break;
-        } else if (strcmp(input, "3") == 0) {
+        } else if (strcmp(line, "3") == 0) {
             cfg->mode = MODE_CLIENT;
             break;
-        } else if (strcmp(input, "q") == 0) {
+        } else if (strcmp(line, "q") == 0) {
             exit(0);
         } else {
-            printf("Invalid choice. ");
+             if (strlen(line) > 0) printf("Invalid choice. ");
         }
     }
 
     if (cfg->mode != MODE_STANDALONE) {
         printf("Port [default 5001]: ");
         fflush(stdout);
-        int p;
-        if (scanf("%d", &p) == 1 && p > 0 && p < 65536) cfg->port = p;
+        if (fgets(line, sizeof(line), stdin)) {
+            line[strcspn(line, "\n")] = 0;
+            if (line[0] != '\0') {
+                 int p = atoi(line);
+                 if (p > 0 && p < 65536) cfg->port = p;
+            }
+        }
 
         if (cfg->mode == MODE_CLIENT) {
-            printf("Server IP (e.g. 192.168.1.10): ");  
+            printf("Server IP [default 127.0.0.1]: ");  
             fflush(stdout);
-            scanf("%63s", cfg->server_ip);
+             if (fgets(line, sizeof(line), stdin)) {
+                line[strcspn(line, "\n")] = 0;
+                if (line[0] != '\0') {
+                    strncpy(cfg->server_ip, line, 63);
+                    cfg->server_ip[63] = '\0';
+                }
+            }
         }
     }
 

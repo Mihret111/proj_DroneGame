@@ -190,7 +190,8 @@ static int client_proto_tick(int net_fd,
                              double myx, double myy,
                              int *have_remote_drone,
                              double *rx, double *ry,
-                             int *server_quit)
+                             int *server_quit,
+                            FILE *logfile)
 {
     // returns:
     //  0 : progressed
@@ -204,21 +205,29 @@ static int client_proto_tick(int net_fd,
 
     case CP_WAIT_TAG:
         if (net_recv_line(net_fd, cp_last_tag, sizeof(cp_last_tag)) < 0) {
+            fprintf(logfile, "[B] NET-CLIENT: recv tag failed\n");
+            fflush(logfile);
             if (errno == EAGAIN || errno == EWOULDBLOCK) return 1;
             return -1;
         }
 
         if (strcmp(cp_last_tag, "q") == 0) {
+            fprintf(logfile, "[B] NET-CLIENT: received 'q' tag\n");    //* Log the received tag
+            fflush(logfile);
             *server_quit = 1;
             return 0;
         }
 
         if (strcmp(cp_last_tag, "drone") == 0) {
+            fprintf(logfile, "[B] NET-CLIENT: received 'drone' tag\n");    //* Log the received tag
+            fflush(logfile);
             cp_phase = CP_WAIT_DRONE_XY;
             return 0;
         }
 
         if (strcmp(cp_last_tag, "obst") == 0) {
+            fprintf(logfile, "[B] NET-CLIENT: received 'obst' tag\n");    //* Log the received tag
+            fflush(logfile);
             cp_phase = CP_SEND_OBST_XY;
             return 0;
         }
@@ -229,12 +238,21 @@ static int client_proto_tick(int net_fd,
     case CP_WAIT_DRONE_XY:{
         double xv, yv;
         if (proto_recv_xy(net_fd, &xv, &yv) < 0) {
+            fprintf(logfile, "[B] NET-CLIENT: recv drone xy failed\n");
+            fflush(logfile);
             if (errno == EAGAIN || errno == EWOULDBLOCK) return 1;
             return -1;
         }
         virtual_to_local(xv, yv, params, rx, ry);
+        fprintf(logfile, "[B] NET-CLIENT: rx drone (virtual=%.2f, %.2f)\n", xv, yv);
 
-        if (net_send_line(net_fd, "dok") < 0) return -1;
+        if (net_send_line(net_fd, "dok") < 0) {
+            fprintf(logfile, "[B] NET-CLIENT: send 'dok' failed\n");
+            fflush(logfile);
+            return -1;
+        }
+        fprintf(logfile, "[B] NET-CLIENT: sent 'dok'\n");
+        fflush(logfile);
 
         *have_remote_drone = 1;
         cp_phase = CP_WAIT_TAG;
@@ -245,7 +263,13 @@ static int client_proto_tick(int net_fd,
         // if (proto_send_xy(net_fd, myx, myy) < 0) return -1;
         double xv, yv;
         local_to_virtual(myx, myy, params, &xv, &yv);       // coordinate frame conversion
-        if (proto_send_xy(net_fd, xv, yv) < 0) return -1;
+        if (proto_send_xy(net_fd, xv, yv) < 0) {
+            fprintf(logfile, "[B] NET-CLIENT: send OBST XY failed\n");
+            fflush(logfile);
+            return -1;
+        }
+        fprintf(logfile, "[B] NET-CLIENT: sent obst xy (v=%.2f, %.2f)\n", xv, yv);
+        fflush(logfile);
 
         cp_phase = CP_WAIT_POK;
         return 0;
@@ -257,7 +281,13 @@ static int client_proto_tick(int net_fd,
             if (errno == EAGAIN || errno == EWOULDBLOCK) return 1;
             return -1;
         }
-        if (strcmp(line, "pok") != 0) return -1;
+        if (strcmp(line, "pok") != 0) {
+            fprintf(logfile, "[B] NET-CLIENT: expected 'pok', got '%s'\n", line);
+            fflush(logfile);
+            return -1;
+        }
+        fprintf(logfile, "[B] NET-CLIENT: received 'pok'\n");
+        fflush(logfile);
 
         cp_phase = CP_WAIT_TAG;
         return 0;
@@ -365,7 +395,8 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             exit(EXIT_FAILURE);
         }
 
-        fprintf(logfile, "[B] Waiting for 1 client...\n");
+        fprintf(logfile, "[B] Waiting for client...\n");
+        printf("Waiting for client...\n");
         fflush(logfile);
 
         // 2. Accept exactly one client connection
@@ -410,8 +441,26 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         if (net_recv_line(net_fd, line, sizeof(line)) < 0) die("[B] net_recv_line(sok)");
         if (strcmp(line, "sok") != 0) die("[B] Expected 'sok'");
 
+        // //*** */
+        // if (net_recv_line(net_fd, line, sizeof(line)) < 0) die("[B] net_recv_line(sok)");
+
+        // // Accept "sok" OR "sok W H" OR "sok W, H"
+        // if (strcmp(line, "sok") == 0) {
+        //     // ok
+        // } else if (sscanf(line, "sok %d %d", &w2, &h2) == 2) {
+        //     // ok (optionally verify matches what you sent)
+        // } else if (sscanf(line, "sok %d, %d", &w2, &h2) == 2) {
+        //     // ok
+        // } else {
+        //     fprintf(stderr, "[SERVER] Bad sok line: '%s'\n", line);
+        //     die("[B] net_recv_line Expected 'sok' or 'sok W H'");
+        // }
+        // //*** */
+
         fprintf(logfile, "[B] Handshake OK (server). Sent size=%dx%d\n", W, H);
         fflush(logfile);
+
+        printf("Handshake performed.\n"); fflush(stdout);
 
     } else if (cfg.mode == MODE_CLIENT) {
         // CLIENT MODE: Connect to an existing Server
@@ -444,11 +493,16 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         // Wait for server's required dimensions
         if (net_recv_line(net_fd, line, sizeof(line)) < 0) die("[B] net_recv_line(size)");
         
+        // Parse the size command
+        // if (sscanf(line, "size %d %d", &peer_W, &peer_H) != 2) die("[B] Bad 'size' format");
+        
+        //*** */
         // Parse the size command (supports multiple formats)
         int parsed = 0;
         if (!parsed && sscanf(line, "size %d %d", &peer_W, &peer_H) == 2) parsed = 1;
         if (!parsed && sscanf(line, "size %d, %d", &peer_W, &peer_H) == 2) parsed = 1;
-        if (!parsed && sscanf(line, "%d, %d", &peer_W, &peer_H) == 2) parsed = 1;
+        if (!parsed && sscanf(line, "size %d,%d", &peer_W, &peer_H) == 2) parsed = 1;
+        if (!parsed && sscanf(line, "%d,%d", &peer_W, &peer_H) == 2) parsed = 1;
         if (!parsed && sscanf(line, "%d %d", &peer_W, &peer_H) == 2) parsed = 1;
 
         if (!parsed)
@@ -456,32 +510,39 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
             fprintf(logfile, "Received bad size line: '%s'\n", line);
             die("[B] Bad 'size' format");
             }; 
-        
-        // Acknowledge size receipt
-        if (net_send_line(net_fd, "sok") < 0) die("[B] net_send_line(sok)");
+        //*** */
 
+
+        // Acknowledge size receipt
+        // accept different possible acknowledgment lines here.
+        if (net_send_line(net_fd, "sok") < 0) die("[B] net_send_line(sok)");      // after parsing peer_W, peer_H
+        // if (net_send_line(net_fd, "sok %d %d", peer_W, peer_H) < 0) die("[B] net_sendf(sok size)");
+
+
+        
         // 3) Client Sanity Check: ensuring local terminal is large enough
         // We cannot shrink the server's UI, so we must be at least as big as the server
         int W, H;
         get_term_size_pre_ncurses(&W, &H);
         
-        if (W < peer_W || H < peer_H) {
-            // Log error to stderr (visible to user immediately) and file
-            fprintf(stderr, "[CLIENT] Terminal too small. Need at least %dx%d (current %dx%d)\n",
-                    peer_W, peer_H, W, H);
-            fprintf(logfile, "[B] Terminal too small. Need %dx%d (current %dx%d)\n",
-                    peer_W, peer_H, W, H);
-            fflush(logfile);
-            close(net_fd); // Clean up
-            exit(EXIT_FAILURE);
-        }
+        // if (W < peer_W || H < peer_H) {
+        //     // Log error to stderr (visible to user immediately) and file
+        //     fprintf(stderr, "[CLIENT] Terminal too small. Need at least %dx%d (current %dx%d)\n",
+        //             peer_W, peer_H, W, H);
+        //     fprintf(logfile, "[B] Terminal too small. Need %dx%d (current %dx%d)\n",
+        //             peer_W, peer_H, W, H);
+        //     fflush(logfile);
+        //     close(net_fd); // Clean up
+        //     exit(EXIT_FAILURE);
+        // }
         forced_max_x = peer_W;
         forced_max_y = peer_H;
-
 
         fprintf(logfile, "[B] Handshake OK (client). Peer size=%dx%d, local=%dx%d\n",
                 peer_W, peer_H, W, H);
         fflush(logfile);
+
+        printf("Handshake performed.\n"); fflush(stdout);
     }
     // ================================================================================ 
 
@@ -601,14 +662,22 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
         // Check if client terminal tries to resize too small
         if (cfg.mode == MODE_CLIENT && forced_max_x > 0 && forced_max_y > 0) {
             int real_y, real_x;
-            getmaxyx(stdscr, real_y, real_x);
+            getmaxyx(stdscr, real_y, real_x);   // get current terminal size
             if (real_x < forced_max_x || real_y < forced_max_y) {
-                endwin();
-                fprintf(stderr,
-                    "[CLIENT] Terminal resized too small. Need %dx%d, now %dx%d.\n"
-                    "Resize back and rerun.\n",
-                    forced_max_x, forced_max_y, real_x, real_y);
-                goto shutdown_and_exit;
+                int io_w, io_h;
+                get_term_size_pre_ncurses(&io_w, &io_h);
+
+                // endwin();
+                // fprintf(stderr,
+                //     "[CLIENT] Terminal resized too small. Need %dx%d, ncurses=%dx%d, ioctl=%dx%d.\n"
+                //     "Resize back and rerun.\n",
+                //     forced_max_x, forced_max_y, real_x, real_y, io_w, io_h);
+                
+                fprintf(logfile, "[B] CheckResize: forced=%dx%d, ncurses=%dx%d, ioctl=%dx%d\n", 
+                        forced_max_x, forced_max_y, real_x, real_y, io_w, io_h);
+                fflush(logfile);
+
+                // goto shutdown_and_exit;
             }
         }
 
@@ -1185,7 +1254,8 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                                             cur_state.x, cur_state.y,
                                             &have_remote,
                                             &sx, &sy,
-                                            &server_quit);
+                                            &server_quit,
+                                            logfile);
 
                 if (rc == 1) break;          // would block -> stop this frame
                 if (rc < 0) {
@@ -1199,6 +1269,8 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                 fprintf(logfile, "[B] NET: server requested quit\n");
                 fflush(logfile);
                 net_send_line(net_fd, "qok");
+                fprintf(logfile, "[B] NET: sent 'qok', shutting down.\n");
+                fflush(logfile);
                 goto shutdown_and_exit;
             }
 
@@ -1207,6 +1279,7 @@ void run_server_process(int fd_kb, int fd_to_d, int fd_from_d, int fd_obs, int f
                 remote_drone_x = sx;
                 remote_drone_y = sy;
                 remote_drone_valid = 1;
+                fprintf(logfile, "[B] NET-CLIENT: updated remote drone pos to (%.2f, %.2f)\n", sx, sy);
             }
         }
         // =======================================================================================

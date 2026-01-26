@@ -68,7 +68,9 @@ int net_server_accept(int listen_fd) {
 int net_client_connect(const char *server_ip, int port) {
     // 1. Create a socket (IPv4, TCP)
     int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return -1;
+    if (fd < 0) {
+        fprintf(stderr, "[CLIENT-case-1] net_client_connect failed\n"); 
+        return -1;}
 
     // 2. Configure the target server address
     struct sockaddr_in addr;
@@ -80,6 +82,7 @@ int net_client_connect(const char *server_ip, int port) {
     if (inet_pton(AF_INET, server_ip, &addr.sin_addr) != 1) {
         close(fd);
         errno = EINVAL; // Invalid argument (bad IP string)
+        fprintf(stderr, "[CLIENT-case-2] net_client_connect failed\n"); 
         return -1;
     }
 
@@ -87,7 +90,13 @@ int net_client_connect(const char *server_ip, int port) {
     for (;;) {
         if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) == 0) return fd; // Success
         if (errno == EINTR) continue; // Retry if interrupted by signal
-        close(fd); // Connection failed definitively
+        
+        // Connection failed definitively
+        int saved_errno = errno;
+        close(fd); 
+        errno = saved_errno; // restore errno for the caller or printing
+
+        fprintf(stderr, "[CLIENT-case-3] net_client_connect failed: %s (errno=%d)\n", strerror(errno), errno); 
         return -1;
     }
 }
@@ -185,7 +194,7 @@ int net_sendf(int fd, const char *fmt, ...) {
 #include <sys/time.h>   // add at top of net.c (for timeout helper)
 #include <stdlib.h>
 
-// --- Optional helper: set recv timeout in ms ---
+// --- helper: set recv timeout in ms ---
 int net_set_rcv_timeout_ms(int fd, int ms) {
     struct timeval tv;
     tv.tv_sec  = ms / 1000;
