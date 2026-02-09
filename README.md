@@ -1,4 +1,4 @@
-# Simulated Drone Game Project
+# Drone Game Simulation Project
 
 This project is a dynamic drone navigation game where the objective is to control a drone to collect as many targets as possible, while also avoiding collisions with obstacles.
 
