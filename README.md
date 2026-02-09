@@ -1,6 +1,10 @@
-# Drone Game Envionment Simulation Project: Instructions for Simulation
+# Simulated Drone Game Project
 
-A dynamic drone navigation game where the objective is to control a drone to collect as many targets as possible, while also avoiding collisions with obstacles.
+This project is a dynamic drone navigation game where the objective is to control a drone to collect as many targets as possible, while also avoiding collisions with obstacles.
+
+**Student:** Mihret Kochito Wolde 
+**ID:** 7229950 
+* Tested  and confirmed with: Bahri Riadh
 
 ## 1- Installation and Running
 
@@ -156,7 +160,7 @@ The following describes how the drone world responds to user actions and how the
   1.  **Warning**: If no heartbeat is received for **2 seconds** (configured via `wd_warn_sec`), W sends `SIGUSR2` to B, triggering a **blinking "WATCHDOG WARNING" banner** on the UI. The UI also displays a **countdown timer** showing the time remaining until system termination. If the system resumes (Server receives valid input), the warning automatically vanishes.
   2.  **Termination**: If no heartbeat is received for **10 seconds** (configured via `wd_kill_sec`), W sends `SIGTERM` to all processes, safely shutting down the simulation.
 
-## 10. Logging
+## 6. Logging
 The system implements a per-process logging strategy. Upon startup, the `logs/` directory is automatically created if it does not exist.
 Each active process writes to its own dedicated log file:
 
@@ -171,37 +175,7 @@ Each active process writes to its own dedicated log file:
 **Log Format**:
 `[TAG] MESSAGE pid=12345 time=YYYY-MM-DD HH:MM:SS`
 
-
-# On Assignment-1 comments recieved in the evaluation
-## 1- Solution Correctness
-### 1.1- Repulsive Force
-- **Implementation**: The repulsive force has been calculated using a **Khatib Potential Field** method in `util.c` (`compute_repulsive_P`).
-- **Obstacles**: Active obstacles generate a repulsive vector inversely proportional to the distance ($1/d$), pushing the drone away when it enters the clearance zone.
-- **Walls**: Similarly, boundary walls exert a repulsive force to prevent the drone from escaping the world/game area.
-- **Key Mapping**: This continuous force vector is projected onto the 8 discrete directions of the user's key cluster. The direction with the highest positive projection is selected and converted into a "virtual key press" (simulated input) that combats the user's input/inertia.
-### 1.2- improvement on flickering window
-The flickering window issue has been resolved by ensuring that the UI is updated only when necessary. This is achieved by checking if the state has changed before updating the UI, and by using a timer to limit the number of updates per second.
-### 1.3- Online parameter manipulation
-- **Implementation**: The system supports reloading certain parameters without recompiling.
-- **Mechanism**: The `params.txt` file is read at startup. To support online updates, the **Watchdog** or a dedicated signal handler could trigger a reload (currently, the architecture supports the structure for this via shared memory or re-reading, but standard behavior initializes from file). *Note based on inspection: Critical parameters are loaded by Main and passed to children. Fully dynamic online reloading of ALL parameters would require IPC signaling, but the parameter structure is modular to support this.*
-
-
-## 3- Error Handling
-The system has been improved to include better error handling mechanisms which is mentioned as follows.
-
--   **System Call Verification**: Critical system calls (e.g., `fork`, `pipe`, `sigaction`, `select`) are wrapped with return value checks. Failures trigger detailed `perror` messages and safe termination via the `die()` utility function during startup.
--   **Safe Shutdown**:
-    -   Signal handlers (`SIGINT`, `SIGTERM`) are registered to catch termination requests, ensuring `endwin()` is called to restore the terminal state and log files are closed properly.
-    -   The Watchdog process actively monitors for system freezes and initiates a safe `SIGTERM` shutdown sequence if a deadlock is detected.
--   **IPC Reliability**:
-    -   Inter-process communication uses blocking `read/write` with EOF detection. If a child process terminates unexpectedly, the Server detects the broken pipe (`read <= 0`) and can handle the disconnect or shut down the system.
--   **File System Safety**:
-    -   Logging initialization (`open_process_log`) handles directory creation failures (`mkdir`) and file access permissions gracefully, falling back to `stderr` if necessary.
--   **Input Validation**:
-    -   Parameter loading parses external configuration strings safely.
-    -   Obstacle and Target generation verifies coordinates against world boundaries to prevent spawning entities outside the valid game area. 
-## 4- Code Quality
-### 4.1 Project structure 
+## 7. Project structure 
 The project now has been corrected to adhere to a standard directory structure. Source files are strictly organized in `src/`, while all compilation artifacts are generated in `build/` to keep the root directory clean.
 
 ```text
@@ -246,12 +220,3 @@ proj_DroneGame/
 - **`build/`**: Keeps the project root clean by storing all compiled object files here.
 - **`logs/`**: Stores execution logs for debugging each process. 
 
-### 4.2 Improved Commenting and Documentation
-
-Inline documentation has been improved across all source files to also improve readability.
-
-**Key improvements include:**
-- **Function Header Blocks**: Critical functions now include detailed descriptions of their purpose, input parameters, return values, and side effects.
-- **IPC Logic Annotation**: Complex inter-process communication flows (via pipes) are explicitly mapped out in comments to clarify data ownership and synchronization points.
-- **Algorithmic Context**: Physics calculations (e.g., Khatib repulsion, dynamic integration) are accompanied by references to the underlying mathematical models.
-- **Standardization**: formatting consistency has been applied to ensure headers and inline notes follow a unified style guide.
