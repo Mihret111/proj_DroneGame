@@ -5,7 +5,7 @@ This project is a dynamic drone navigation game where the objective is to contro
 **Student:** Mihret Kochito Wolde 
 **ID:** 7229950 
 * Tested  and confirmed with: Bahri Riadh
-
+                            : Mahdi Baghban
 ## 1- Installation and Running
 
 - Prerequisites
